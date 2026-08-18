@@ -1,0 +1,75 @@
+name: Publish immutable image and contracts
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -e '.[test]'
+      - run: ruff check .
+      - run: pytest -q
+      - run: python scripts/generate_fixture.py
+      - name: Generate exact merged-commit OpenAPI artifact
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: python scripts/generate_release_contract.py
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/zephytiju/juntai-synthetic-data-generation:sha-${{ github.sha }}
+            ghcr.io/zephytiju/juntai-synthetic-data-generation:1.0.0
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=1.0.0
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: ghcr.io/zephytiju/juntai-synthetic-data-generation
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable publication evidence
+        env:
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          printf '%s\n' "image=ghcr.io/zephytiju/juntai-synthetic-data-generation@${IMAGE_DIGEST}" > dist/publication-evidence.txt
+          printf '%s\n' "source=${SOURCE_COMMIT}" >> dist/publication-evidence.txt
+          shasum -a 256 openapi/synthetic-data-generation.v1.json >> dist/publication-evidence.txt
+          shasum -a 256 fixtures/* >> dist/publication-evidence.txt
+      - uses: actions/upload-artifact@v5
+        with:
+          name: juntai-synthetic-data-generation-${{ github.sha }}
+          path: |
+            dist/contracts/
+            dist/publication-evidence.txt
+            fixtures/
+            openapi/synthetic-data-generation.v1.json
+            openapi/synthetic-data-generation.v1.sha256
+          if-no-files-found: error
+          retention-days: 90

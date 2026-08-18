@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "juntai-synthetic-data-generation"
+version = "1.0.0"
+description = "Generic policy-governed asynchronous synthetic dataset generation for Juntai"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Juntai Platform" }]
+dependencies = [
+  "fastapi>=0.115,<1",
+  "juntai-artifact-client>=1.0.2,<2",
+  "juntai-fuse-api[http]>=2.0.0,<3",
+  "juntai-iam>=1.0.0,<2",
+  "juntai-observability>=2.0.5,<3",
+  "juntai-usage>=1.0.0,<2",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "uvicorn[standard]>=0.30,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "build>=1.2,<2",
+  "httpx>=0.27,<1",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.24,<2",
+  "ruff>=0.11,<1",
+]
+
+[project.scripts]
+juntai-synthetic-data = "juntai_synthetic_data.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/juntai_synthetic_data"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
