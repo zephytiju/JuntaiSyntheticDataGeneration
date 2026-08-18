@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -e '.[test]'
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python scripts/generate_openapi.py
+      - run: python scripts/generate_fixture.py
+      - run: git diff --exit-code -- openapi fixtures
+      - run: pytest -q
+      - run: python -m build
+      - name: Verify wheel install and public surface
+        run: |
+          python -m venv /tmp/juntai-synthetic-wheel
+          /tmp/juntai-synthetic-wheel/bin/pip install dist/*.whl
+          /tmp/juntai-synthetic-wheel/bin/python -c "import juntai_synthetic_data; print(juntai_synthetic_data.__version__)"
+
+  image:
+    name: Image contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: juntai-synthetic-data-generation:ci
+      - run: docker image inspect juntai-synthetic-data-generation:ci --format '{{.Id}}'
+      - run: |
+          test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{.Config.User}}')" = "65532:65532"
+          test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{json .Config.Entrypoint}}')" = '["juntai-synthetic-data"]'
