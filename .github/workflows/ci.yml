@@ -33,7 +33,7 @@ jobs:
       - name: Verify wheel install and public surface
         run: |
           python -m venv /tmp/juntai-synthetic-wheel
-          /tmp/juntai-synthetic-wheel/bin/pip install --no-deps dist/*.whl
+          /tmp/juntai-synthetic-wheel/bin/pip install dist/*.whl
           /tmp/juntai-synthetic-wheel/bin/python -c "import juntai_synthetic_data; print(juntai_synthetic_data.__version__)"
 
   image:
