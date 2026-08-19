@@ -6,17 +6,24 @@ import os
 import re
 from pathlib import Path
 
+import grpc
 import psycopg
 from juntai.artifact import ArtifactClient, OrasOCITransport, mtls_channel_credentials
 from juntai.observability import ObservabilityConfig, configure_observability
 from juntai.usage import UsageReporter
 
+from juntai_synthetic_data.execution import (
+    ArtifactExactReferenceVerifier,
+    ArtifactExecutionInputPublisher,
+    WorkerCoordinator,
+)
 from juntai_synthetic_data.jobs import SqlJobRepository
 from juntai_synthetic_data.policy import DefaultPolicyEngine
 from juntai_synthetic_data.providers import DeterministicTabularProvider, ProviderRegistry
 from juntai_synthetic_data.publication import ArtifactDatasetPublisher
 from juntai_synthetic_data.quotas import InMemoryQuotaLedger, QuotaLimits
 from juntai_synthetic_data.service import SyntheticDataService
+from juntai_synthetic_data.worker_protocol import WorkloadIdentity
 
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 
@@ -51,16 +58,36 @@ def build_runtime_service() -> SyntheticDataService:
         registry_credentials=credentials,
         oci=oci,
     )
+    token = _bytes("JUNTAI_ARTIFACT_WORKLOAD_TOKEN_FILE").decode().strip()
+    if not token:
+        raise RuntimeError("Artifact workload token file is empty")
+    caller_credentials = grpc.access_token_call_credentials(token)
     provider = DeterministicTabularProvider(worker_image_digest=worker_digest)
     telemetry = configure_observability(
         ObservabilityConfig(
             service_namespace="juntai",
             service_name="synthetic-data-generation",
-            service_version="1.1.0",
+            service_version="1.2.0",
             deployment_environment=os.getenv("JUNTAI_ENVIRONMENT", "production"),
             artifact_digest=os.getenv("JUNTAI_SERVICE_IMAGE_DIGEST"),
             otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
         )
+    )
+    source_revision = _required("JUNTAI_SOURCE_REVISION")
+    coordinator = WorkerCoordinator(
+        repository=repository,
+        inputs=ArtifactExecutionInputPublisher(artifact_client, producer_build_id=source_revision),
+        source_revision=source_revision,
+        worker_image_digest=worker_digest,
+        api_workload=WorkloadIdentity(
+            namespace=_required("JUNTAI_API_WORKLOAD_NAMESPACE"),
+            serviceAccount=_required("JUNTAI_API_WORKLOAD_SERVICE_ACCOUNT"),
+        ),
+        executor_workload=WorkloadIdentity(
+            namespace=_required("JUNTAI_EXECUTOR_WORKLOAD_NAMESPACE"),
+            serviceAccount=_required("JUNTAI_EXECUTOR_WORKLOAD_SERVICE_ACCOUNT"),
+        ),
+        verifier=ArtifactExactReferenceVerifier(artifact_client, caller_credentials),
     )
     return SyntheticDataService(
         repository=repository,
@@ -69,5 +96,6 @@ def build_runtime_service() -> SyntheticDataService:
         quotas=InMemoryQuotaLedger(QuotaLimits()),
         publisher=ArtifactDatasetPublisher(artifact_client),
         usage_reporter=UsageReporter.from_otel(telemetry.logger_provider),
-        source_revision=_required("JUNTAI_SOURCE_REVISION"),
+        source_revision=source_revision,
+        coordinator=coordinator,
     )

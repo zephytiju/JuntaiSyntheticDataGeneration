@@ -2,9 +2,7 @@ name: Release immutable Synthetic service and KES migrations
 
 on:
   push:
-    tags: ["synthetic-data-v1.1.0"]
-    branches: ["main"]
-    paths: [".github/workflows/release-service.yml"]
+    tags: ["synthetic-data-v1.2.0"]
   workflow_dispatch:
 
 permissions:
@@ -18,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/zephytiju/juntai-synthetic-data-generation
-      RELEASE_TAG: synthetic-data-v1.1.0
-      VERSION: 1.1.0
+      RELEASE_TAG: synthetic-data-v1.2.0
+      VERSION: 1.2.0
     steps:
       - uses: actions/checkout@v5
         with:
@@ -72,7 +70,7 @@ jobs:
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python scripts/generate_service_release.py \
             --out dist/release-assets \
-            --wheel dist/juntai_synthetic_data_generation-1.1.0-py3-none-any.whl \
+            --wheel dist/juntai_synthetic_data_generation-1.2.0-py3-none-any.whl \
             --real-kes-evidence /tmp/real-kes-acceptance.json \
             --repository "$GITHUB_REPOSITORY" \
             --source-revision "$RELEASE_SHA" \
@@ -91,8 +89,8 @@ jobs:
           gh release create "$RELEASE_TAG"
           dist/release-assets/*
           --verify-tag
-          --title "Synthetic Data service and KES migrations 1.1.0"
-          --notes "Service-owned one-shot job-metadata KES migrations, exact wheel/OpenAPI contracts, real KingbaseES acceptance, and digest-pinned service image $IMAGE_DIGEST. The synthetic-data-docs-v1.0.0 release remains unchanged."
+          --title "Synthetic Data service, SWP/v1, and KES migrations 1.2.0"
+          --notes "Service-owned SWP/v1 worker isolation, bearer-IAM OpenAPI/MCP contracts, forward-only job-metadata KES migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior synthetic-data-v1.1.0 and synthetic-data-docs-v1.0.0 releases remain unchanged."
       - name: Verify immutable release
         env:
           GH_TOKEN: ${{ github.token }}

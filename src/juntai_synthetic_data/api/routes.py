@@ -7,7 +7,6 @@ from juntai.sdk.fuse_api import EndpointGroup, FuseServer, ProfileSelectionReque
 
 from juntai_synthetic_data.contracts.models import CreateJobRequest, JobResult, JobStatus
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
-from juntai_synthetic_data.scheduling import JobScheduler
 from juntai_synthetic_data.service import SyntheticDataService
 
 from .auth import RequestAuthorizer, UnconfiguredAuthorizer
@@ -38,8 +37,10 @@ def build_job_group(
     headers = {
         "parameters": {
             "idempotency_key": {"in": "header", "name": "Idempotency-Key"},
-        }
+        },
+        "security": [{"bearerAuth": []}],
     }
+    secured = {"security": [{"bearerAuth": []}]}
 
     @jobs.endpoint(
         path="",
@@ -69,6 +70,7 @@ def build_job_group(
         response_model=JobStatus,
         operation_id="syntheticData.getJob",
         summary="Read bounded job status and evidence",
+        http=secured,
     )
     async def get_job(job_id: str, request: Request) -> JobStatus:
         try:
@@ -84,6 +86,7 @@ def build_job_group(
         response_model=JobStatus,
         operation_id="syntheticData.cancelJob",
         summary="Request best-effort job cancellation",
+        http=secured,
     )
     async def cancel_job(job_id: str, request: Request) -> JobStatus:
         try:
@@ -99,6 +102,7 @@ def build_job_group(
         response_model=JobResult,
         operation_id="syntheticData.getJobResult",
         summary="Read the exact immutable dataset Artifact result",
+        http=secured,
     )
     async def get_job_result(job_id: str, request: Request) -> JobResult:
         try:
@@ -125,9 +129,8 @@ def build_server(
             descriptor_version="juntai.fuse/v1alpha1",
         )
     )
-    server = FuseServer(title="Juntai Synthetic Data Generation", version="1.1.0", profile=profile)
+    server = FuseServer(title="Juntai Synthetic Data Generation", version="1.2.0", profile=profile)
     server.register(build_job_group(service, authorizer))
     if enable_runtime:
-        server.register_component(JobScheduler(service))
         server.enable_selected_adapter()
     return server

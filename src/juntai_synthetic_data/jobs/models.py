@@ -72,6 +72,9 @@ class Job:
     failure: dict[str, Any] | None = None
     result: dict[str, Any] | None = None
     cancellation_requested: bool = False
+    cancel_sequence: int = 0
+    active_attempt_id: str | None = None
+    active_attempt_number: int = 0
 
     def __post_init__(self) -> None:
         if not self.transitions:

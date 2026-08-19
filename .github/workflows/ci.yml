@@ -26,17 +26,19 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: python scripts/generate_openapi.py
+      - run: python scripts/generate_worker_protocol.py
       - run: python scripts/generate_fixture.py
-      - run: git diff --exit-code -- openapi fixtures
+      - run: git diff --exit-code -- openapi contracts/worker-protocol fixtures
       - run: pytest -q
       - run: python -m build
       - name: Verify wheel install and public surface
         run: |
           python -m venv /tmp/juntai-synthetic-wheel
           /tmp/juntai-synthetic-wheel/bin/pip install dist/*.whl
-          /tmp/juntai-synthetic-wheel/bin/python -c "import juntai_synthetic_data; assert juntai_synthetic_data.__version__ == '1.1.0'"
+          /tmp/juntai-synthetic-wheel/bin/python -c "import juntai_synthetic_data; assert juntai_synthetic_data.__version__ == '1.2.0'"
           /tmp/juntai-synthetic-wheel/bin/juntai-synthetic-data migrate --print-manifest > /tmp/migration-set.json
           grep -q af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822 /tmp/migration-set.json
+          grep -q 3e1938165b6ff0bcc9dcfc80288e74f32715474e259f82b346307724c0809779 /tmp/migration-set.json
 
   image:
     name: Image contract
@@ -55,6 +57,13 @@ jobs:
           test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{json .Config.Entrypoint}}')" = '["juntai-synthetic-data"]'
           docker run --rm juntai-synthetic-data-generation:ci migrate --print-manifest > /tmp/image-migration-set.json
           grep -q af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822 /tmp/image-migration-set.json
+          grep -q 3e1938165b6ff0bcc9dcfc80288e74f32715474e259f82b346307724c0809779 /tmp/image-migration-set.json
+          if docker run --rm --network none \
+            -e JUNTAI_SYNTHETIC_WORKER_PROTOCOL=juntai.synthetic.worker/v1 \
+            -e JUNTAI_SYNTHETIC_WORKER_SOCKET=/var/run/juntai-worker/swp-v1.sock \
+            -e JUNTAI_JOB_DATABASE_DSN=forbidden \
+            juntai-synthetic-data-generation:ci worker >/tmp/worker.out 2>/tmp/worker.err; then exit 1; fi
+          grep -q 'forbidden worker configuration' /tmp/worker.err
 
   documentation:
     name: Documentation capability

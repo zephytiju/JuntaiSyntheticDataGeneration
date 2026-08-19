@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "juntai-synthetic-data-generation"
-version = "1.1.0"
+version = "1.2.0"
 description = "Generic policy-governed asynchronous synthetic dataset generation for Juntai"
 readme = "README.md"
 requires-python = ">=3.11"
