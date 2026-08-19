@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "juntai.synthetic-data.migration-set/v1",
+  "service": {
+    "name": "synthetic-data-generation",
+    "version": "1.1.0"
+  },
+  "database": {
+    "product": "KingbaseES",
+    "requiredVersionPrefix": "KingbaseES V009R001C010",
+    "schema": "juntai_synthetic_data",
+    "ledger": "juntai_synthetic_data.schema_migrations",
+    "transactionLockId": 53594
+  },
+  "compatibility": {
+    "minimumServiceVersion": "1.0.0",
+    "maximumServiceVersionExclusive": "2.0.0",
+    "policy": "forward-only",
+    "rollback": "Re-pin the last compatible service image. No migration command performs an implicit or destructive downgrade."
+  },
+  "command": {
+    "entryPoint": "juntai-synthetic-data migrate",
+    "dsnFileEnvironment": "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE",
+    "sourceRevisionEnvironment": "JUNTAI_SOURCE_REVISION",
+    "imageDigestEnvironment": "JUNTAI_SERVICE_IMAGE_DIGEST",
+    "exitCodes": {
+      "0": "schema current or migrations applied",
+      "2": "invalid command or configuration",
+      "3": "compatibility, drift, or downgrade safety failure",
+      "4": "database connectivity or transactional execution failure",
+      "5": "pending migrations detected by --check"
+    }
+  },
+  "migrations": [
+    {
+      "id": "0001_jobs",
+      "path": "0001_jobs.sql",
+      "sha256": "af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822",
+      "transactional": true,
+      "releasedBaselineAdoption": "1.0.0"
+    }
+  ]
+}

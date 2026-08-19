@@ -34,7 +34,9 @@ jobs:
         run: |
           python -m venv /tmp/juntai-synthetic-wheel
           /tmp/juntai-synthetic-wheel/bin/pip install dist/*.whl
-          /tmp/juntai-synthetic-wheel/bin/python -c "import juntai_synthetic_data; print(juntai_synthetic_data.__version__)"
+          /tmp/juntai-synthetic-wheel/bin/python -c "import juntai_synthetic_data; assert juntai_synthetic_data.__version__ == '1.1.0'"
+          /tmp/juntai-synthetic-wheel/bin/juntai-synthetic-data migrate --print-manifest > /tmp/migration-set.json
+          grep -q af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822 /tmp/migration-set.json
 
   image:
     name: Image contract
@@ -51,6 +53,8 @@ jobs:
       - run: |
           test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{.Config.User}}')" = "65532:65532"
           test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{json .Config.Entrypoint}}')" = '["juntai-synthetic-data"]'
+          docker run --rm juntai-synthetic-data-generation:ci migrate --print-manifest > /tmp/image-migration-set.json
+          grep -q af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822 /tmp/image-migration-set.json
 
   documentation:
     name: Documentation capability
@@ -82,8 +86,9 @@ jobs:
           python -c 'import importlib.metadata as m; assert m.version("juntai-documentation-capability") == "1.0.0"; assert m.version("juntai-fuse-api") == "2.0.0"'
       - name: Verify exact source contracts and locked graph
         run: |
-          python scripts/generate_documentation_contracts.py
-          git diff --exit-code -- documentation/contracts
+          (cd documentation/contracts && sha256sum -c openapi.sha256 && sha256sum -c mcp-descriptor.sha256)
+          python -c 'import yaml; m=yaml.safe_load(open("documentation/manifest.yaml")); assert m["metadata"]["producerBuildId"] == "2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b"'
+          git diff --exit-code -- documentation
           juntai-capability resolve --manifest documentation/manifest.yaml --lock /tmp/capability.lock
           cmp documentation/capability.lock /tmp/capability.lock
           juntai-capability validate --lock documentation/capability.lock

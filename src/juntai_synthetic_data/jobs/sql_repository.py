@@ -109,7 +109,7 @@ class SqlJobRepository:
                         job.tenant_id,
                         job.idempotency_key,
                         job.request_digest,
-                        job.request.model_dump_json(exclude_none=True),
+                        job.request.model_dump_json(exclude_none=True, by_alias=True),
                         job.state.value,
                         job.version,
                         job.created_at,

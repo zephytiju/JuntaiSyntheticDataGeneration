@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
 from conftest import request_data
@@ -14,6 +15,14 @@ def test_canonical_request_digest_is_stable() -> None:
     second = CreateJobRequest.model_validate(copy.deepcopy(request_data()))
     assert first.digest == second.digest
     assert first.generation_contract.digest == second.generation_contract.digest
+
+
+def test_request_alias_json_round_trips_for_sql_persistence() -> None:
+    request = CreateJobRequest.model_validate(request_data())
+    persisted = request.model_dump_json(exclude_none=True, by_alias=True)
+
+    assert json.loads(persisted)["provider"]["class"] == "tabular"
+    assert CreateJobRequest.model_validate_json(persisted) == request
 
 
 def test_unknown_semantic_fields_are_rejected() -> None:

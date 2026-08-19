@@ -125,7 +125,7 @@ def build_server(
             descriptor_version="juntai.fuse/v1alpha1",
         )
     )
-    server = FuseServer(title="Juntai Synthetic Data Generation", version="1.0.0", profile=profile)
+    server = FuseServer(title="Juntai Synthetic Data Generation", version="1.1.0", profile=profile)
     server.register(build_job_group(service, authorizer))
     if enable_runtime:
         server.register_component(JobScheduler(service))
