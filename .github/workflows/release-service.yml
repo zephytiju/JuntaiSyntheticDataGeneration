@@ -28,6 +28,11 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify exact annotated tag and main source
         run: |
           git fetch --force origin "refs/tags/$RELEASE_TAG:refs/release-tags/$RELEASE_TAG"
