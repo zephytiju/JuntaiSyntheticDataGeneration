@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DOCUMENTED_SOURCE_COMMIT: 2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b
-      DOCUMENTATION_WHEEL: ${{ runner.temp }}/juntai_documentation_capability-1.0.0-py3-none-any.whl
+      DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
       DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
     steps:
       - uses: actions/checkout@v5
