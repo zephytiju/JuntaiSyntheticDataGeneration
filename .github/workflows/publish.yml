@@ -3,6 +3,7 @@ name: Publish immutable image and contracts
 on:
   push:
     branches: [main, "agent/synthetic-worker-isolation-v*"]
+    paths-ignore: ["release-evidence/**"]
 
 permissions:
   contents: read
@@ -21,8 +22,13 @@ jobs:
           cache: pip
       - run: python -m pip install -e '.[test]'
       - run: ruff check .
+      - run: ruff format --check .
       - run: pytest -q
+      - run: python scripts/generate_openapi.py
+      - run: python scripts/generate_worker_protocol.py
       - run: python scripts/generate_fixture.py
+      - run: python scripts/generate_documentation_contracts.py
+      - run: git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
       - name: Generate exact merged-commit OpenAPI artifact
         env:
           SOURCE_COMMIT: ${{ github.sha }}

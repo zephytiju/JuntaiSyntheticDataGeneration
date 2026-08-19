@@ -59,8 +59,13 @@ def test_main_publication_never_retags_the_documented_1_0_0_image() -> None:
 def test_service_release_requires_real_kes_evidence_and_attestation() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release-service.yml").read_text()
 
-    assert 'tags: ["synthetic-data-v1.2.0"]' in workflow
+    assert 'paths: ["release-evidence/synthetic-data-v1.2.0.json"]' in workflow
     assert "REAL_KES_EVIDENCE_BASE64=" in workflow
+    assert workflow.index("actions/attest-build-provenance@v3") < workflow.index(
+        "Create or verify exact annotated release tags"
+    )
+    assert 'test "$(git cat-file -t "$release_ref")" = tag' in workflow
+    assert 'test "$(git rev-list -n 1 "$release_ref")" = "$RELEASE_SHA"' in workflow
     assert "actions/attest-build-provenance@v3" in workflow
     assert "generate_service_release.py" in workflow
     assert "isImmutable" in workflow

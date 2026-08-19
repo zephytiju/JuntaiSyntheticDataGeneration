@@ -2,8 +2,8 @@ name: Release immutable Synthetic service and KES migrations
 
 on:
   push:
-    tags: ["synthetic-data-v1.2.0"]
-  workflow_dispatch:
+    branches: ["main"]
+    paths: ["release-evidence/synthetic-data-v1.2.0.json"]
 
 permissions:
   contents: write
@@ -17,7 +17,9 @@ jobs:
     env:
       IMAGE: ghcr.io/zephytiju/juntai-synthetic-data-generation
       RELEASE_TAG: synthetic-data-v1.2.0
+      DOCUMENTATION_TAG: synthetic-data-docs-v1.2.0
       VERSION: 1.2.0
+      REAL_KES_EVIDENCE: release-evidence/synthetic-data-v1.2.0.json
     steps:
       - uses: actions/checkout@v5
         with:
@@ -31,22 +33,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Verify exact annotated tag and main source
+      - name: Verify exact evidence, source, and main ancestry
         run: |
-          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/release-tags/$RELEASE_TAG"
-          release_ref="refs/release-tags/$RELEASE_TAG"
-          test "$(git cat-file -t "$release_ref")" = tag
-          release_sha="$(git rev-list -n 1 "$release_ref")"
+          release_sha="$(python -c 'import json,os; print(json.load(open(os.environ["REAL_KES_EVIDENCE"]))["sourceRevision"])')"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch origin main
           git merge-base --is-ancestor "$release_sha" origin/main
-          echo "RELEASE_REF=$release_ref" >> "$GITHUB_ENV"
           echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
+          cp "$REAL_KES_EVIDENCE" /tmp/real-kes-acceptance.json
           git checkout --detach "$release_sha"
           test "$(git rev-parse HEAD)" = "$release_sha"
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "$VERSION"
-      - name: Extract immutable real-KES evidence from annotated tag
-        run: |
-          python -c 'import base64,os,pathlib,subprocess; message=subprocess.check_output(["git","for-each-ref","--format=%(contents)",os.environ["RELEASE_REF"]],text=True); values=[line.removeprefix("REAL_KES_EVIDENCE_BASE64=") for line in message.splitlines() if line.startswith("REAL_KES_EVIDENCE_BASE64=")]; assert len(values)==1; pathlib.Path("/tmp/real-kes-acceptance.json").write_bytes(base64.b64decode(values[0],validate=True))'
       - name: Resolve and verify the already-published exact source image
         run: |
           docker buildx imagetools inspect "$IMAGE:sha-$RELEASE_SHA" --raw > /tmp/image-index.json
@@ -60,8 +57,10 @@ jobs:
           ruff check .
           ruff format --check .
           python scripts/generate_openapi.py
+          python scripts/generate_worker_protocol.py
           python scripts/generate_fixture.py
-          git diff --exit-code -- openapi fixtures
+          python scripts/generate_documentation_contracts.py
+          git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
           pytest -q
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python -m build --wheel
@@ -82,15 +81,49 @@ jobs:
       - uses: actions/attest-build-provenance@v3
         with:
           subject-path: dist/release-assets/*
+      - name: Create or verify exact annotated release tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          evidence_base64="$(base64 < /tmp/real-kes-acceptance.json | tr -d '\n')"
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+          ensure_tag() {
+            tag="$1"
+            title="$2"
+            release_ref="refs/release-tags/$tag"
+            if test -n "$(git ls-remote --tags origin "refs/tags/$tag")"; then
+              git fetch --force origin "refs/tags/$tag:$release_ref"
+              test "$(git cat-file -t "$release_ref")" = tag
+              test "$(git rev-list -n 1 "$release_ref")" = "$RELEASE_SHA"
+            else
+              git tag -a "$tag" "$RELEASE_SHA" -m "$title"
+              git push origin "refs/tags/$tag"
+              git update-ref "$release_ref" "refs/tags/$tag"
+            fi
+          }
+
+          ensure_tag "$RELEASE_TAG" "Synthetic Data 1.2.0 immutable release
+
+          REAL_KES_EVIDENCE_BASE64=$evidence_base64"
+          ensure_tag "$DOCUMENTATION_TAG" "Synthetic Data documentation capability 1.2.0"
+          service_message="$(git for-each-ref --format='%(contents)' "refs/release-tags/$RELEASE_TAG")"
+          printf '%s\n' "$service_message" | grep -Fqx \
+            "REAL_KES_EVIDENCE_BASE64=$evidence_base64"
       - name: Publish and lock immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$RELEASE_TAG"
-          dist/release-assets/*
-          --verify-tag
-          --title "Synthetic Data service, SWP/v1, and KES migrations 1.2.0"
-          --notes "Service-owned SWP/v1 worker isolation, bearer-IAM OpenAPI/MCP contracts, forward-only job-metadata KES migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior synthetic-data-v1.1.0 and synthetic-data-docs-v1.0.0 releases remain unchanged."
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable' | grep -x true
+          else
+            gh release create "$RELEASE_TAG" \
+              dist/release-assets/* \
+              --verify-tag \
+              --title "Synthetic Data service, SWP/v1, and KES migrations 1.2.0" \
+              --notes "Service-owned SWP/v1 worker isolation, bearer-IAM OpenAPI/MCP contracts, forward-only job-metadata KES migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior synthetic-data-v1.1.0 and synthetic-data-docs-v1.0.0 releases remain unchanged."
+          fi
       - name: Verify immutable release
         env:
           GH_TOKEN: ${{ github.token }}
