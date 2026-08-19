@@ -32,3 +32,25 @@ python -m venv .venv
 
 Production runs must set `JUNTAI_WORKER_IMAGE_DIGEST` to the published GHCR digest, use mTLS for
 the internal Artifact Registry, and inject OCI credentials through the standard workload path.
+
+## Documentation capability publication
+
+The service-owned reviewed documentation graph lives under `documentation/`. It is bound to source
+`2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b`, the committed OpenAPI digest, and the exact
+FuseAPI 2.0.0 MCP descriptor. The descriptor deliberately contains no Tools because the documented
+release is HTTP-only; the bundle publishes MCP Resources without inventing a second runtime surface.
+
+Resolve, validate, build, and verify with the immutable
+`JuntaiDocumentationCapabilityBundle` v1.0.0 wheel whose SHA-256 is
+`82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33`:
+
+```bash
+juntai-capability resolve --manifest documentation/manifest.yaml --lock documentation/capability.lock
+juntai-capability validate --lock documentation/capability.lock
+juntai-capability build --lock documentation/capability.lock --out dist/capability
+```
+
+CI repeats the locked build twice, verifies byte identity, compiles the signed catalog input, and
+proves exact static-catalog selection. The `synthetic-data-docs-v1.0.0` release workflow publishes
+the immutable bundle, human and MCP projections, provenance, publication result, pin, catalog input,
+checksums, SBOM, in-toto provenance, and GitHub build attestations.

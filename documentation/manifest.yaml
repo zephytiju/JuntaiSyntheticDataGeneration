@@ -1,0 +1,212 @@
+apiVersion: capability.juntai.io/v1
+kind: AgentCapabilityBundle
+metadata:
+  bundleId: synthetic-data-generation.service
+  version: 1.0.0
+  ownerKey: synthetic-data-generation
+  producerBuildId: 2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b
+contracts:
+  openapi:
+    path: contracts/openapi.json
+    digest: sha256:a1b68d7f8a76807b55e8707c49b88679e9a2ef288bc5d8d9966dd1fd4cafab60
+  mcp:
+    path: contracts/mcp-descriptor.json
+    digest: sha256:5304fcfce8234a2428f83f8785dd2d8d6b34f32ff67db3df5464829084301e9a
+    descriptorDigest: sha256:5304fcfce8234a2428f83f8785dd2d8d6b34f32ff67db3df5464829084301e9a
+sources:
+  root: .
+  units:
+    - unitId: synthetic-data.overview
+      kind: overview
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Synthetic Data Generation service
+      sourcePath: guides/overview.md
+      order: 0
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.overview
+        mimeType: text/markdown
+    - unitId: synthetic-data.workflow.create
+      kind: workflow
+      audiences: [human, agent, developer]
+      locale: en
+      title: Create a bounded generation job
+      sourcePath: workflows/create-job.md
+      parentUnitId: synthetic-data.overview
+      order: 10
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.workflow.create
+        mimeType: text/markdown
+    - unitId: synthetic-data.workflow.monitor-cancel
+      kind: workflow
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Monitor or cancel a job
+      sourcePath: workflows/monitor-and-cancel.md
+      parentUnitId: synthetic-data.overview
+      order: 20
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.workflow.monitor-cancel
+        mimeType: text/markdown
+    - unitId: synthetic-data.workflow.result
+      kind: workflow
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Resolve a successful dataset result
+      sourcePath: workflows/resolve-result.md
+      parentUnitId: synthetic-data.overview
+      order: 30
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.workflow.result
+        mimeType: text/markdown
+    - unitId: synthetic-data.reference.api
+      kind: reference
+      audiences: [human, agent, developer]
+      locale: en
+      title: Exact HTTP API and lifecycle
+      sourcePath: reference/api-and-lifecycle.md
+      parentUnitId: synthetic-data.overview
+      order: 40
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.reference.api
+        mimeType: text/markdown
+    - unitId: synthetic-data.reference.contract
+      kind: reference
+      audiences: [human, agent, developer]
+      locale: en
+      title: Generation contract reference
+      sourcePath: reference/generation-contract.md
+      parentUnitId: synthetic-data.overview
+      order: 50
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.reference.contract
+        mimeType: text/markdown
+    - unitId: synthetic-data.reference.validator
+      kind: reference
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Exact validator Artifact reference
+      sourcePath: reference/validator-artifact.md
+      parentUnitId: synthetic-data.overview
+      order: 60
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.reference.validator
+        mimeType: text/markdown
+    - unitId: synthetic-data.safety.authorization
+      kind: safety
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Authorization, policy, and approvals
+      sourcePath: safety/authorization-and-policy.md
+      parentUnitId: synthetic-data.overview
+      order: 70
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.safety.authorization
+        mimeType: text/markdown
+    - unitId: synthetic-data.safety.isolation
+      kind: safety
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Privacy, isolation, and immutable output
+      sourcePath: safety/privacy-and-isolation.md
+      parentUnitId: synthetic-data.overview
+      order: 80
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.safety.isolation
+        mimeType: text/markdown
+    - unitId: synthetic-data.troubleshooting.failures
+      kind: troubleshooting
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Stable failures and recovery
+      sourcePath: troubleshooting/stable-failures.md
+      parentUnitId: synthetic-data.overview
+      order: 90
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.troubleshooting.failures
+        mimeType: text/markdown
+    - unitId: synthetic-data.example.create
+      kind: example
+      audiences: [human, agent, developer]
+      locale: en
+      title: Create-job HTTP example
+      sourcePath: examples/create-job.json
+      parentUnitId: synthetic-data.workflow.create
+      order: 100
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.example.create
+        mimeType: application/json
+    - unitId: synthetic-data.example.result
+      kind: example
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Successful-result HTTP example
+      sourcePath: examples/job-result.json
+      parentUnitId: synthetic-data.workflow.result
+      order: 110
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.example.result
+        mimeType: application/json
+compatibility:
+  platform: ">=4.0 <5.0"
+  lifecycle: release
+  taskClasses:
+    - synthetic-data.jobs.create
+    - synthetic-data.jobs.monitor
+    - synthetic-data.jobs.cancel
+    - synthetic-data.jobs.result
+  frameworks:
+    mcp: ">=2.0 <3.0"
+publication:
+  visibility: internal
+  namespace: platform
+  name: synthetic-data-generation-docs
+  kind: documentation.capability
+  routeKey: platform.documentation
+provenance:
+  sourceRepository: https://github.com/zephytiju/JuntaiSyntheticDataGeneration
+  sourceCommit: 2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b
+  packagerVersion: 1.0.0
+  rendererVersions:
+    human: 1.0.0
+    mcp: 1.0.0
+  builtAt: "2026-08-18T23:57:25Z"
+  approvalEvidenceRef:
+    schemaVersion: "1"
+    evidenceId: feishu-task-ccc2eafa-4db4-4c46-85da-b707e3c7dbdd
+    ownerDomain: data-intel-platform
+    evidenceKind: release-approval
+    target:
+      kind: resource
+      resourceId: feishu-task:ccc2eafa-4db4-4c46-85da-b707e3c7dbdd
+    read:
+      protocol: openapi
+      serviceId: feishu-task-v2
+      operationId: task.tasks.get
+      openapiDigest: sha256:f91d746ce7ca3b9f7cde7cf279af604adf7db21836be9639bcbe8830a97499b2
+    selectors:
+      - selectorId: taskGuid
+        valueType: string
+        value: ccc2eafa-4db4-4c46-85da-b707e3c7dbdd
+      - selectorId: documentedSourceCommit
+        valueType: string
+        value: 2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b
+    observedAt: "2026-08-18T23:57:25Z"
+    access:
+      authorizationPolicyId: data-intel-platform.documentation-release-read
+      delegatedCallerRequired: true
+      requiredScopes: [task:task:read]
+      allowedPurposes: [release-verification]
+      dataClassification: internal
