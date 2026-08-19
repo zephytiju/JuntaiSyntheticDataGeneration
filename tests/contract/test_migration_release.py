@@ -42,6 +42,7 @@ def test_real_kes_harness_is_pinned_and_covers_required_matrix() -> None:
         "_tenant_isolation",
         "_api_worker_startup",
         "post-restart",
+        "transactional-failure-recovery",
     ):
         assert check in harness
 

@@ -112,6 +112,8 @@ def _partial_failure(dsn: str, binding: MigrationBinding) -> None:
         raise AssertionError("forced partial failure did not fail")
     assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.jobs')") == [(None,)]
     assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.must_rollback')") == [(None,)]
+    recovered = apply_migrations(dsn, binding)
+    assert recovered.applied == ("0001_jobs", "0002_worker_protocol")
 
 
 def _released_baseline_upgrade(dsn: str, binding: MigrationBinding) -> None:
@@ -443,6 +445,7 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
             "repeat-idempotence",
             "concurrency-lock",
             "transactional-partial-failure",
+            "transactional-failure-recovery",
             "released-1.1.0-baseline-upgrade",
             "tenant-rls-isolation-all-swp-tables",
             "atomic-outbox-result-replay",

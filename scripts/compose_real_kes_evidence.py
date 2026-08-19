@@ -10,6 +10,7 @@ EXPECTED_CHECKS = {
     "repeat-idempotence",
     "concurrency-lock",
     "transactional-partial-failure",
+    "transactional-failure-recovery",
     "released-1.1.0-baseline-upgrade",
     "tenant-rls-isolation-all-swp-tables",
     "atomic-outbox-result-replay",
