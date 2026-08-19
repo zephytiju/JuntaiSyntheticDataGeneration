@@ -89,9 +89,9 @@ def _concurrency(dsn: str, binding: MigrationBinding) -> None:
     rows = _execute(
         dsn,
         "SELECT migration_id, count(*) FROM juntai_synthetic_data.schema_migrations "
-        "GROUP BY migration_id",
+        "GROUP BY migration_id ORDER BY migration_id",
     )
-    assert rows == [("0001_jobs", 1), ("0002_worker_protocol", 1)]
+    assert rows == [("0001_jobs", 1), ("0002_worker_protocol", 1)], rows
 
 
 def _partial_failure(dsn: str, binding: MigrationBinding) -> None:
