@@ -1,0 +1,86 @@
+name: Release immutable Synthetic service and KES migrations
+
+on:
+  push:
+    tags: ["synthetic-data-v1.1.0"]
+
+permissions:
+  contents: write
+  packages: read
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/zephytiju/juntai-synthetic-data-generation
+      RELEASE_TAG: synthetic-data-v1.1.0
+      VERSION: 1.1.0
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Verify exact annotated tag and main source
+        run: |
+          test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          git fetch origin main
+          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "$VERSION"
+      - name: Extract immutable real-KES evidence from annotated tag
+        run: |
+          python -c 'import base64,pathlib,subprocess; message=subprocess.check_output(["git","for-each-ref","--format=%(contents)","refs/tags/synthetic-data-v1.1.0"],text=True); values=[line.removeprefix("REAL_KES_EVIDENCE_BASE64=") for line in message.splitlines() if line.startswith("REAL_KES_EVIDENCE_BASE64=")]; assert len(values)==1; pathlib.Path("/tmp/real-kes-acceptance.json").write_bytes(base64.b64decode(values[0],validate=True))'
+      - name: Resolve and verify the already-published exact source image
+        run: |
+          docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" --raw > /tmp/image-index.json
+          resolved="sha256:$(sha256sum /tmp/image-index.json | cut -d ' ' -f 1)"
+          evidence="$(python -c 'import json; print(json.load(open("/tmp/real-kes-acceptance.json"))["serviceImageDigest"])')"
+          test "$resolved" = "$evidence"
+          echo "IMAGE_DIGEST=$resolved" >> "$GITHUB_ENV"
+      - name: Install, lint, test, and build deterministic wheel
+        run: |
+          python -m pip install -e '.[test]'
+          ruff check .
+          ruff format --check .
+          python scripts/generate_openapi.py
+          python scripts/generate_fixture.py
+          git diff --exit-code -- openapi fixtures
+          pytest -q
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python -m build --wheel
+      - name: Compose exact release assets
+        run: |
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          python scripts/generate_service_release.py \
+            --out dist/release-assets \
+            --wheel dist/juntai_synthetic_data_generation-1.1.0-py3-none-any.whl \
+            --real-kes-evidence /tmp/real-kes-acceptance.json \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-revision "$GITHUB_SHA" \
+            --image "$IMAGE" \
+            --image-digest "$IMAGE_DIGEST" \
+            --run-id "$GITHUB_RUN_ID"
+          cd dist/release-assets
+          sha256sum -c SHA256SUMS
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/release-assets/*
+      - name: Publish and lock immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/release-assets/*
+          --verify-tag
+          --title "Synthetic Data service and KES migrations 1.1.0"
+          --notes "Service-owned one-shot job-metadata KES migrations, exact wheel/OpenAPI contracts, real KingbaseES acceptance, and digest-pinned service image $IMAGE_DIGEST. The synthetic-data-docs-v1.0.0 release remains unchanged."
+      - name: Verify immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "$GITHUB_REF_NAME" --json isImmutable --jq '.isImmutable' | grep -x true

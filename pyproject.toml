@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "juntai-synthetic-data-generation"
-version = "1.0.0"
+version = "1.1.0"
 description = "Generic policy-governed asynchronous synthetic dataset generation for Juntai"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,6 +36,9 @@ juntai-synthetic-data = "juntai_synthetic_data.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/juntai_synthetic_data"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "juntai_synthetic_data/_migrations"
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"

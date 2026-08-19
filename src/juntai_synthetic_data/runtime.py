@@ -56,7 +56,7 @@ def build_runtime_service() -> SyntheticDataService:
         ObservabilityConfig(
             service_namespace="juntai",
             service_name="synthetic-data-generation",
-            service_version="1.0.0",
+            service_version="1.1.0",
             deployment_environment=os.getenv("JUNTAI_ENVIRONMENT", "production"),
             artifact_digest=os.getenv("JUNTAI_SERVICE_IMAGE_DIGEST"),
             otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),

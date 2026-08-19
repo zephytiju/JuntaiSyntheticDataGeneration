@@ -1,0 +1,262 @@
+"""Compose the exact immutable Synthetic 1.1.0 service and migration release assets."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import zipfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).parents[1]
+VERSION = "1.1.0"
+RELEASE_TAG = "synthetic-data-v1.1.0"
+KES_IMAGE = (
+    "kingbase_v009r001c010b0004_single_x86:v1@"
+    "sha256:0bce318e74adca7a3d619b55b336269017507fd679833b7ce5d8400289661724"
+)
+_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _canonical(value: object) -> bytes:
+    return (
+        json.dumps(
+            value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+        )
+        + "\n"
+    ).encode()
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _created_at() -> str:
+    epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
+    return datetime.fromtimestamp(epoch, tz=UTC).isoformat().replace("+00:00", "Z")
+
+
+def _write(path: Path, value: object) -> None:
+    path.write_bytes(_canonical(value))
+
+
+def _wheel_version(path: Path) -> str:
+    with zipfile.ZipFile(path) as archive:
+        metadata_names = [
+            name for name in archive.namelist() if name.endswith(".dist-info/METADATA")
+        ]
+        if len(metadata_names) != 1:
+            raise SystemExit("wheel must contain exactly one METADATA file")
+        metadata = archive.read(metadata_names[0]).decode()
+    for line in metadata.splitlines():
+        if line.startswith("Version: "):
+            return line.removeprefix("Version: ")
+    raise SystemExit("wheel METADATA has no Version")
+
+
+def _artifact(path: Path) -> dict[str, object]:
+    return {"name": path.name, "sha256": _digest(path), "byteLength": path.stat().st_size}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--wheel", required=True)
+    parser.add_argument("--real-kes-evidence", required=True)
+    parser.add_argument("--repository", required=True)
+    parser.add_argument("--source-revision", required=True)
+    parser.add_argument("--image", required=True)
+    parser.add_argument("--image-digest", required=True)
+    parser.add_argument("--run-id", required=True)
+    return parser
+
+
+def _validate(args: argparse.Namespace, evidence: dict[str, Any]) -> None:
+    if not _COMMIT.fullmatch(args.source_revision):
+        raise SystemExit("source revision must be an exact Git commit")
+    if not _DIGEST.fullmatch(args.image_digest):
+        raise SystemExit("service image must use an immutable digest")
+    if evidence.get("result") != "passed":
+        raise SystemExit("real-KES acceptance result is not passed")
+    if evidence.get("sourceRevision") != args.source_revision:
+        raise SystemExit("real-KES evidence source differs from release source")
+    if evidence.get("serviceImageDigest") != args.image_digest:
+        raise SystemExit("real-KES evidence image differs from release image")
+    if evidence.get("kingbaseImage") != KES_IMAGE:
+        raise SystemExit("real-KES evidence used an unexpected KingbaseES image")
+    if evidence.get("migrationIds") != ["0001_jobs"]:
+        raise SystemExit("real-KES evidence used an unexpected migration set")
+
+
+def main() -> int:
+    args = _parser().parse_args()
+    output = Path(args.out)
+    output.mkdir(parents=True, exist_ok=False)
+    wheel = Path(args.wheel)
+    if _wheel_version(wheel) != VERSION:
+        raise SystemExit(f"wheel version must be {VERSION}")
+    evidence = json.loads(Path(args.real_kes_evidence).read_text())
+    _validate(args, evidence)
+
+    sources = {
+        wheel: wheel.name,
+        ROOT / "migrations" / "0001_jobs.sql": "0001_jobs.sql",
+        ROOT / "migrations" / "manifest.v1.json": "migration-set.v1.json",
+        ROOT / "openapi" / "synthetic-data-generation.v1.json": (
+            "synthetic-data-generation.openapi.v1.json"
+        ),
+        ROOT / "openapi" / "synthetic-data-generation.v1.sha256": (
+            "synthetic-data-generation.openapi.v1.sha256"
+        ),
+        ROOT / "MIGRATIONS.md": "MIGRATIONS.md",
+        ROOT / "scripts" / "real_kes_acceptance.py": "real_kes_acceptance.py",
+        ROOT / "scripts" / "run-real-kes-acceptance.sh": "run-real-kes-acceptance.sh",
+        Path(args.real_kes_evidence): "real-kes-acceptance.json",
+    }
+    for source, name in sources.items():
+        shutil.copyfile(source, output / name)
+
+    migration_set = json.loads((output / "migration-set.v1.json").read_text())
+    sql_digest = _digest(output / "0001_jobs.sql")
+    if migration_set["migrations"][0]["sha256"] != sql_digest:
+        raise SystemExit("released SQL does not match the migration-set checksum")
+    openapi_digest = _digest(output / "synthetic-data-generation.openapi.v1.json")
+    expected_openapi = (
+        (output / "synthetic-data-generation.openapi.v1.sha256").read_text().split()[0]
+    )
+    if openapi_digest != expected_openapi:
+        raise SystemExit("released OpenAPI checksum differs from its checksum file")
+    image_reference = f"{args.image}@{args.image_digest}"
+    wheel_asset = _artifact(output / wheel.name)
+    migration_release = {
+        "schemaVersion": "juntai.synthetic-data.migration-release/v1",
+        "service": "synthetic-data-generation",
+        "version": VERSION,
+        "releaseTag": RELEASE_TAG,
+        "releaseBinding": {
+            "repository": f"https://github.com/{args.repository}",
+            "sourceRevision": args.source_revision,
+            "image": image_reference,
+            "wheel": wheel_asset,
+            "openapiSha256": openapi_digest,
+            "githubRun": f"https://github.com/{args.repository}/actions/runs/{args.run_id}",
+        },
+        "execution": {
+            "argv": ["juntai-synthetic-data", "migrate"],
+            "dsnFileEnvironment": "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE",
+            "sourceRevisionEnvironment": "JUNTAI_SOURCE_REVISION",
+            "imageDigestEnvironment": "JUNTAI_SERVICE_IMAGE_DIGEST",
+            "successExitCode": 0,
+            "checkPendingExitCode": 5,
+        },
+        "compatibility": migration_set["compatibility"],
+        "database": migration_set["database"],
+        "migrations": migration_set["migrations"],
+        "realKesAcceptance": {
+            "asset": "real-kes-acceptance.json",
+            "sha256": _digest(output / "real-kes-acceptance.json"),
+            "result": "passed",
+        },
+    }
+    _write(output / "migration-release-manifest.json", migration_release)
+
+    base_assets = [_artifact(path) for path in sorted(output.iterdir()) if path.is_file()]
+    release_manifest = {
+        "schemaVersion": "juntai.synthetic-data.service-release/v1",
+        "repository": args.repository,
+        "releaseTag": RELEASE_TAG,
+        "version": VERSION,
+        "sourceRevision": args.source_revision,
+        "image": image_reference,
+        "imageSbom": "OCI BuildKit SBOM attached to the image index",
+        "imageProvenance": "GitHub artifact attestation and OCI BuildKit provenance",
+        "migrationManifest": {
+            "name": "migration-release-manifest.json",
+            "sha256": _digest(output / "migration-release-manifest.json"),
+        },
+        "artifacts": base_assets,
+    }
+    _write(output / "service-release-manifest.json", release_manifest)
+
+    sbom_subjects = [_artifact(path) for path in sorted(output.iterdir()) if path.is_file()]
+    sbom = {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": "juntai-synthetic-data-generation-1.1.0-release",
+        "documentNamespace": f"https://github.com/{args.repository}/actions/runs/{args.run_id}/sbom",
+        "creationInfo": {
+            "created": _created_at(),
+            "creators": ["Tool: generate_service_release.py-1.1.0"],
+        },
+        "packages": [
+            {
+                "name": item["name"],
+                "SPDXID": f"SPDXRef-Package-{index}",
+                "versionInfo": VERSION,
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+                "checksums": [{"algorithm": "SHA256", "checksumValue": item["sha256"]}],
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "Apache-2.0",
+                "copyrightText": "Copyright 2026 Juntai Team",
+            }
+            for index, item in enumerate(sbom_subjects, start=1)
+        ],
+    }
+    _write(output / "release.spdx.json", sbom)
+    provenance = {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [
+            {"name": item["name"], "digest": {"sha256": item["sha256"]}} for item in sbom_subjects
+        ],
+        "predicateType": "https://slsa.dev/provenance/v1",
+        "predicate": {
+            "buildDefinition": {
+                "buildType": (
+                    f"https://github.com/{args.repository}/.github/workflows/"
+                    "release-service.yml@refs/heads/main"
+                ),
+                "externalParameters": {
+                    "version": VERSION,
+                    "releaseTag": RELEASE_TAG,
+                    "image": image_reference,
+                    "realKesEvidenceSha256": _digest(output / "real-kes-acceptance.json"),
+                },
+                "internalParameters": {},
+                "resolvedDependencies": [
+                    {
+                        "uri": f"git+https://github.com/{args.repository}@{args.source_revision}",
+                        "digest": {"gitCommit": args.source_revision},
+                    },
+                    {"uri": f"pkg:oci/{args.image}@{args.image_digest}"},
+                    {"uri": f"pkg:oci/{KES_IMAGE}"},
+                ],
+            },
+            "runDetails": {
+                "builder": {"id": "https://github.com/actions/runner"},
+                "metadata": {
+                    "invocationId": f"https://github.com/{args.repository}/actions/runs/{args.run_id}",
+                    "startedOn": _created_at(),
+                },
+            },
+        },
+    }
+    _write(output / "release.intoto.jsonl", provenance)
+    checksum_assets = [path for path in sorted(output.iterdir()) if path.name != "SHA256SUMS"]
+    (output / "SHA256SUMS").write_text(
+        "".join(f"{_digest(path)}  {path.name}\n" for path in checksum_assets),
+        encoding="utf-8",
+        newline="\n",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

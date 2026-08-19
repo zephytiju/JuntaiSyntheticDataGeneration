@@ -32,6 +32,8 @@ python -m venv .venv
 
 Production runs must set `JUNTAI_WORKER_IMAGE_DIGEST` to the published GHCR digest, use mTLS for
 the internal Artifact Registry, and inject OCI credentials through the standard workload path.
+The explicit service-owned job-metadata KES migration command and its secret-file configuration,
+locking, compatibility, exit, and rollback contract are specified in [MIGRATIONS.md](MIGRATIONS.md).
 
 ## Documentation capability publication
 

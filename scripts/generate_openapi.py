@@ -15,7 +15,7 @@ ROOT = Path(__file__).parents[1]
 
 def main() -> None:
     service = cast(SyntheticDataService, object())
-    app = HTTPAdapter(title="Juntai Synthetic Data Generation", version="1.0.0").build(
+    app = HTTPAdapter(title="Juntai Synthetic Data Generation", version="1.1.0").build(
         [build_job_group(service)], []
     )
     content = (
