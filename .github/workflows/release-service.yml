@@ -3,6 +3,9 @@ name: Release immutable Synthetic service and KES migrations
 on:
   push:
     tags: ["synthetic-data-v1.1.0"]
+    branches: ["main"]
+    paths: [".github/workflows/release-service.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,18 +30,23 @@ jobs:
           cache: pip
       - name: Verify exact annotated tag and main source
         run: |
-          test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          git fetch --force origin "refs/tags/$RELEASE_TAG:refs/release-tags/$RELEASE_TAG"
+          release_ref="refs/release-tags/$RELEASE_TAG"
+          test "$(git cat-file -t "$release_ref")" = tag
+          release_sha="$(git rev-list -n 1 "$release_ref")"
           git fetch origin main
-          test "$(git rev-parse origin/main)" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$release_sha" origin/main
+          echo "RELEASE_REF=$release_ref" >> "$GITHUB_ENV"
+          echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
+          git checkout --detach "$release_sha"
+          test "$(git rev-parse HEAD)" = "$release_sha"
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "$VERSION"
       - name: Extract immutable real-KES evidence from annotated tag
         run: |
-          python -c 'import base64,pathlib,subprocess; message=subprocess.check_output(["git","for-each-ref","--format=%(contents)","refs/tags/synthetic-data-v1.1.0"],text=True); values=[line.removeprefix("REAL_KES_EVIDENCE_BASE64=") for line in message.splitlines() if line.startswith("REAL_KES_EVIDENCE_BASE64=")]; assert len(values)==1; pathlib.Path("/tmp/real-kes-acceptance.json").write_bytes(base64.b64decode(values[0],validate=True))'
+          python -c 'import base64,os,pathlib,subprocess; message=subprocess.check_output(["git","for-each-ref","--format=%(contents)",os.environ["RELEASE_REF"]],text=True); values=[line.removeprefix("REAL_KES_EVIDENCE_BASE64=") for line in message.splitlines() if line.startswith("REAL_KES_EVIDENCE_BASE64=")]; assert len(values)==1; pathlib.Path("/tmp/real-kes-acceptance.json").write_bytes(base64.b64decode(values[0],validate=True))'
       - name: Resolve and verify the already-published exact source image
         run: |
-          docker buildx imagetools inspect "$IMAGE:sha-$GITHUB_SHA" --raw > /tmp/image-index.json
+          docker buildx imagetools inspect "$IMAGE:sha-$RELEASE_SHA" --raw > /tmp/image-index.json
           resolved="sha256:$(sha256sum /tmp/image-index.json | cut -d ' ' -f 1)"
           evidence="$(python -c 'import json; print(json.load(open("/tmp/real-kes-acceptance.json"))["serviceImageDigest"])')"
           test "$resolved" = "$evidence"
@@ -52,17 +60,17 @@ jobs:
           python scripts/generate_fixture.py
           git diff --exit-code -- openapi fixtures
           pytest -q
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python -m build --wheel
       - name: Compose exact release assets
         run: |
-          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$GITHUB_SHA")"
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python scripts/generate_service_release.py \
             --out dist/release-assets \
             --wheel dist/juntai_synthetic_data_generation-1.1.0-py3-none-any.whl \
             --real-kes-evidence /tmp/real-kes-acceptance.json \
             --repository "$GITHUB_REPOSITORY" \
-            --source-revision "$GITHUB_SHA" \
+            --source-revision "$RELEASE_SHA" \
             --image "$IMAGE" \
             --image-digest "$IMAGE_DIGEST" \
             --run-id "$GITHUB_RUN_ID"
@@ -75,7 +83,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME"
+          gh release create "$RELEASE_TAG"
           dist/release-assets/*
           --verify-tag
           --title "Synthetic Data service and KES migrations 1.1.0"
@@ -83,4 +91,4 @@ jobs:
       - name: Verify immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release view "$GITHUB_REF_NAME" --json isImmutable --jq '.isImmutable' | grep -x true
+        run: gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable' | grep -x true
