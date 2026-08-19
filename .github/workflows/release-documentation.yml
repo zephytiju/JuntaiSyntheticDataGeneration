@@ -1,0 +1,106 @@
+name: Release immutable documentation capability
+
+on:
+  push:
+    tags: ["synthetic-data-docs-v1.0.0"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      DOCUMENTED_SOURCE_COMMIT: 2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b
+      DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
+      DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Verify exact release identity
+        run: |
+          test "$GITHUB_REF_NAME" = synthetic-data-docs-v1.0.0
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Install service and exact Documentation Capability release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install -e '.[test]'
+          python -m pip install 'juntai-fuse-api[http]==2.0.0'
+          gh release download v1.0.0 \
+            --repo zephytiju/JuntaiDocumentationCapabilityBundle \
+            --pattern juntai_documentation_capability-1.0.0-py3-none-any.whl \
+            --output "$DOCUMENTATION_WHEEL"
+          python -c 'import hashlib,os,pathlib; p=pathlib.Path(os.environ["DOCUMENTATION_WHEEL"]); assert hashlib.sha256(p.read_bytes()).hexdigest() == os.environ["DOCUMENTATION_WHEEL_SHA256"]'
+          python -m pip install "$DOCUMENTATION_WHEEL"
+          python -c 'import importlib.metadata as m; assert m.version("juntai-documentation-capability") == "1.0.0"; assert m.version("juntai-fuse-api") == "2.0.0"'
+      - name: Test service and exact documentation inputs
+        run: |
+          ruff check .
+          ruff format --check .
+          pytest -q
+          python scripts/generate_documentation_contracts.py
+          git diff --exit-code -- documentation/contracts
+          juntai-capability resolve --manifest documentation/manifest.yaml --lock /tmp/capability.lock
+          cmp documentation/capability.lock /tmp/capability.lock
+          juntai-capability validate --lock documentation/capability.lock
+      - name: Build twice from the committed lock
+        run: |
+          juntai-capability build --lock documentation/capability.lock --out dist/capability
+          juntai-capability build --lock documentation/capability.lock --out /tmp/capability-second
+          diff -qr dist/capability /tmp/capability-second
+      - name: Compose and verify exact publication contracts
+        run: |
+          python scripts/generate_documentation_publication.py \
+            --build dist/capability \
+            --out dist/release-assets \
+            --release-tag "$GITHUB_REF_NAME" \
+            --attestation-id "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          juntai-capability verify \
+            --bundle dist/capability \
+            --pin dist/release-assets/CapabilityPublicationResult.json
+          juntai-capability catalog compile \
+            --records dist/release-assets/catalog-record.json \
+            --signature dist/release-assets/catalog-signature.json \
+            --out dist/release-assets/catalog-index.json
+          python scripts/verify_documentation_publication.py \
+            --build dist/capability \
+            --publication dist/release-assets/CapabilityPublicationResult.json \
+            --catalog dist/release-assets/catalog-index.json \
+            --selection-request dist/release-assets/selection-request.json \
+            --out dist/release-assets/CapabilityVerificationResult.json
+      - name: Generate checksums, SBOM, and in-toto provenance
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$DOCUMENTED_SOURCE_COMMIT")" >> "$GITHUB_ENV"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$DOCUMENTED_SOURCE_COMMIT")" \
+            python scripts/generate_documentation_release_evidence.py \
+              --assets dist/release-assets \
+              --repository "$GITHUB_REPOSITORY" \
+              --release-commit "$GITHUB_SHA" \
+              --run-id "$GITHUB_RUN_ID"
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/release-assets/*
+      - name: Stage immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          dist/release-assets/*
+          --draft
+          --verify-tag
+          --title "Synthetic Data documentation capability 1.0.0"
+          --notes "Exact service-owned documentation bound to Synthetic source 2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b and JuntaiDocumentationCapabilityBundle v1.0.0."
+      - name: Publish and lock immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --draft=false
+          gh release view "$GITHUB_REF_NAME" --json isImmutable --jq '.isImmutable' | grep -x true

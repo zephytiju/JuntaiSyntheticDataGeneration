@@ -1,0 +1,16 @@
+{
+  "expectedOutcome": {
+    "artifact": {
+      "artifact_id": "<registry-issued-artifact-id>",
+      "digest": "sha256:<immutable-artifact-digest>",
+      "media_type": "application/vnd.juntai.synthetic-dataset.v1+tar",
+      "version_id": "<registry-issued-version-id>"
+    },
+    "state": "SUCCEEDED"
+  },
+  "expectedToolCalls": [],
+  "input": {
+    "method": "GET",
+    "path": "/v1/jobs/<job_id>/result"
+  }
+}

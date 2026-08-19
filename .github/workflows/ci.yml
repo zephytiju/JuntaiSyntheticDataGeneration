@@ -51,3 +51,70 @@ jobs:
       - run: |
           test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{.Config.User}}')" = "65532:65532"
           test "$(docker image inspect juntai-synthetic-data-generation:ci --format '{{json .Config.Entrypoint}}')" = '["juntai-synthetic-data"]'
+
+  documentation:
+    name: Documentation capability
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
+      DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
+      RELEASE_TAG: synthetic-data-docs-v1.0.0
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install service and exact Documentation Capability release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install -e '.[test]'
+          python -m pip install 'juntai-fuse-api[http]==2.0.0'
+          gh release download v1.0.0 \
+            --repo zephytiju/JuntaiDocumentationCapabilityBundle \
+            --pattern juntai_documentation_capability-1.0.0-py3-none-any.whl \
+            --output "$DOCUMENTATION_WHEEL"
+          python -c 'import hashlib,os,pathlib; p=pathlib.Path(os.environ["DOCUMENTATION_WHEEL"]); assert hashlib.sha256(p.read_bytes()).hexdigest() == os.environ["DOCUMENTATION_WHEEL_SHA256"]'
+          python -m pip install "$DOCUMENTATION_WHEEL"
+          python -c 'import importlib.metadata as m; assert m.version("juntai-documentation-capability") == "1.0.0"; assert m.version("juntai-fuse-api") == "2.0.0"'
+      - name: Verify exact source contracts and locked graph
+        run: |
+          python scripts/generate_documentation_contracts.py
+          git diff --exit-code -- documentation/contracts
+          juntai-capability resolve --manifest documentation/manifest.yaml --lock /tmp/capability.lock
+          cmp documentation/capability.lock /tmp/capability.lock
+          juntai-capability validate --lock documentation/capability.lock
+      - name: Prove two clean builds are byte-identical
+        run: |
+          juntai-capability build --lock documentation/capability.lock --out /tmp/capability-first
+          juntai-capability build --lock documentation/capability.lock --out /tmp/capability-second
+          diff -qr /tmp/capability-first /tmp/capability-second
+      - name: Verify publication result, pin, and signed catalog handoff
+        run: |
+          python scripts/generate_documentation_publication.py \
+            --build /tmp/capability-first \
+            --out /tmp/release-assets \
+            --release-tag "$RELEASE_TAG" \
+            --attestation-id "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          juntai-capability verify \
+            --bundle /tmp/capability-first \
+            --pin /tmp/release-assets/CapabilityPublicationResult.json
+          juntai-capability catalog compile \
+            --records /tmp/release-assets/catalog-record.json \
+            --signature /tmp/release-assets/catalog-signature.json \
+            --out /tmp/release-assets/catalog-index.json
+          python scripts/verify_documentation_publication.py \
+            --build /tmp/capability-first \
+            --publication /tmp/release-assets/CapabilityPublicationResult.json \
+            --catalog /tmp/release-assets/catalog-index.json \
+            --selection-request /tmp/release-assets/selection-request.json \
+            --out /tmp/release-assets/CapabilityVerificationResult.json
+      - uses: actions/upload-artifact@v5
+        with:
+          name: synthetic-data-documentation-${{ github.sha }}
+          path: /tmp/release-assets/*
+          if-no-files-found: error
+          retention-days: 90
