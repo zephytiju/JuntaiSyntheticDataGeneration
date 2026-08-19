@@ -1,8 +1,8 @@
 # Exact HTTP API and lifecycle
 
 This bundle binds the exact 1.2.0 OpenAPI digest
-`sha256:b085ddac0d23bdf2ea307f0055685d55865a261804a647ef2d7de9da2f7bbacf`
-copied from reviewed source `1e9105dabe022a58047ed2dd83a7353478f925aa`.
+`sha256:26200a846179369af5c7f86e248f8eb1fa8085d62ddde994812ba348e68c93a8`
+copied from reviewed source `a7511342311e84baf9f65045b8c9e72d4b3f23bd`.
 
 | Method and path | Operation ID | Purpose |
 | --- | --- | --- |

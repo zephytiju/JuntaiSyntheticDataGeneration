@@ -30,8 +30,8 @@ not invent MCP Tools or Prompts.
 
 ## Exact release binding
 
-- Service source: `1e9105dabe022a58047ed2dd83a7353478f925aa`.
-- OpenAPI: `sha256:b085ddac0d23bdf2ea307f0055685d55865a261804a647ef2d7de9da2f7bbacf`.
-- MCP descriptor: `sha256:8ce1f760e84279745ef63396cc110ffa68df31a1e1ba836994454801fa7946b4`.
+- Service source: `a7511342311e84baf9f65045b8c9e72d4b3f23bd`.
+- OpenAPI: `sha256:26200a846179369af5c7f86e248f8eb1fa8085d62ddde994812ba348e68c93a8`.
+- MCP descriptor: `sha256:ca13c264d709c36382c02f9c120152b2c45765ae559d8a71529bdc1b60c89d21`.
 - SWP schema: `contracts/worker-protocol/swp.v1.schema.json` in the service release.
 - Documentation packager and renderers: `JuntaiDocumentationCapabilityBundle` `v1.0.0`

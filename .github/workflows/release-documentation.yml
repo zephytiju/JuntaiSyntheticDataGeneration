@@ -13,7 +13,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      DOCUMENTED_SOURCE_COMMIT: 1e9105dabe022a58047ed2dd83a7353478f925aa
+      DOCUMENTED_SOURCE_COMMIT: a7511342311e84baf9f65045b8c9e72d4b3f23bd
       DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
       DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
     steps:
@@ -97,7 +97,7 @@ jobs:
           --draft
           --verify-tag
           --title "Synthetic Data documentation capability 1.2.0"
-          --notes "Exact service-owned bearer-IAM, SWP/v1, worker-isolation, API, migration, and recovery documentation bound to Synthetic source 1e9105dabe022a58047ed2dd83a7353478f925aa and JuntaiDocumentationCapabilityBundle v1.0.0. The synthetic-data-docs-v1.0.0 release remains unchanged."
+          --notes "Exact service-owned bearer-IAM, SWP/v1, worker-isolation, API, migration, and recovery documentation bound to Synthetic source a7511342311e84baf9f65045b8c9e72d4b3f23bd and JuntaiDocumentationCapabilityBundle v1.0.0. The synthetic-data-docs-v1.0.0 release remains unchanged."
       - name: Publish and lock immutable release
         env:
           GH_TOKEN: ${{ github.token }}

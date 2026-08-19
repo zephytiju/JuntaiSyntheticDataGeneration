@@ -13,8 +13,8 @@ from juntai_synthetic_data.api import build_job_group
 from juntai_synthetic_data.service import SyntheticDataService
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENTED_SOURCE_COMMIT = "1e9105dabe022a58047ed2dd83a7353478f925aa"
-OPENAPI_DIGEST = "sha256:b085ddac0d23bdf2ea307f0055685d55865a261804a647ef2d7de9da2f7bbacf"
+DOCUMENTED_SOURCE_COMMIT = "a7511342311e84baf9f65045b8c9e72d4b3f23bd"
+OPENAPI_DIGEST = "sha256:26200a846179369af5c7f86e248f8eb1fa8085d62ddde994812ba348e68c93a8"
 
 
 def _digest(payload: bytes) -> str:

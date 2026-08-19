@@ -96,7 +96,7 @@ jobs:
       - name: Verify exact source contracts and locked graph
         run: |
           (cd documentation/contracts && sha256sum -c openapi.sha256 && sha256sum -c mcp-descriptor.sha256)
-          python -c 'import yaml; m=yaml.safe_load(open("documentation/manifest.yaml")); assert m["metadata"]["producerBuildId"] == "1e9105dabe022a58047ed2dd83a7353478f925aa"'
+          python -c 'import yaml; m=yaml.safe_load(open("documentation/manifest.yaml")); assert m["metadata"]["producerBuildId"] == "a7511342311e84baf9f65045b8c9e72d4b3f23bd"'
           git diff --exit-code -- documentation
           juntai-capability resolve --manifest documentation/manifest.yaml --lock /tmp/capability.lock
           cmp documentation/capability.lock /tmp/capability.lock

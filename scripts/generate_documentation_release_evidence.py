@@ -9,7 +9,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-DOCUMENTED_SOURCE_COMMIT = "1e9105dabe022a58047ed2dd83a7353478f925aa"
+DOCUMENTED_SOURCE_COMMIT = "a7511342311e84baf9f65045b8c9e72d4b3f23bd"
 
 
 def _canonical(value: object) -> bytes:
