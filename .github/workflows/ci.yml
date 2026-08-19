@@ -73,7 +73,7 @@ jobs:
     env:
       DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
       DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
-      RELEASE_TAG: synthetic-data-docs-v1.0.0
+      RELEASE_TAG: synthetic-data-docs-v1.2.0
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -96,7 +96,7 @@ jobs:
       - name: Verify exact source contracts and locked graph
         run: |
           (cd documentation/contracts && sha256sum -c openapi.sha256 && sha256sum -c mcp-descriptor.sha256)
-          python -c 'import yaml; m=yaml.safe_load(open("documentation/manifest.yaml")); assert m["metadata"]["producerBuildId"] == "2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b"'
+          python -c 'import yaml; m=yaml.safe_load(open("documentation/manifest.yaml")); assert m["metadata"]["producerBuildId"] == "1e9105dabe022a58047ed2dd83a7353478f925aa"'
           git diff --exit-code -- documentation
           juntai-capability resolve --manifest documentation/manifest.yaml --lock /tmp/capability.lock
           cmp documentation/capability.lock /tmp/capability.lock

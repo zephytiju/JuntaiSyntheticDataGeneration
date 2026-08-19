@@ -11,8 +11,9 @@ from typing import Any
 from juntai.documentation.canonical import canonical_json_bytes
 
 REPOSITORY = "zephytiju/JuntaiSyntheticDataGeneration"
-RELEASE_VERSION = "1.0.0"
-DOCUMENTED_SOURCE_COMMIT = "2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b"
+RELEASE_VERSION = "1.2.0"
+PACKAGER_VERSION = "1.0.0"
+DOCUMENTED_SOURCE_COMMIT = "1e9105dabe022a58047ed2dd83a7353478f925aa"
 DOCUMENTATION_CAPABILITY_SOURCE = "d7cd9b6860b7a716b210efdf66ae20e0f1d87a33"
 DOCUMENTATION_CAPABILITY_WHEEL = (
     "sha256:82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33"
@@ -58,8 +59,8 @@ def main() -> int:
     output = Path(args.out)
     output.mkdir(parents=True, exist_ok=True)
     build = json.loads((build_root / "build-result.json").read_text(encoding="utf-8"))
-    if build["packageVersion"] != RELEASE_VERSION:
-        raise SystemExit("publication must be built by JuntaiDocumentationCapabilityBundle 1.0.0")
+    if build["packageVersion"] != PACKAGER_VERSION or build["version"] != RELEASE_VERSION:
+        raise SystemExit("documentation build or packager version is not the reviewed tuple")
     if build["producerBuildId"] != DOCUMENTED_SOURCE_COMMIT:
         raise SystemExit("publication producerBuildId differs from the exact Synthetic source")
 
@@ -121,8 +122,8 @@ def main() -> int:
     record = {
         "title": "Synthetic Data Generation",
         "summary": (
-            "Exact bounded job, policy, validation, cancellation, Artifact, provenance, "
-            "and safety documentation."
+            "Exact bearer-IAM, SWP/v1 worker isolation, bounded job, Artifact, provenance, "
+            "migration, and safety documentation."
         ),
         "ownerKey": build["ownerKey"],
         "visibility": "internal",

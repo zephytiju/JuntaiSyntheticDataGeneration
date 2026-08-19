@@ -16,7 +16,7 @@ def _digest(path: Path) -> str:
 
 def test_documentation_contracts_pin_exact_source_release() -> None:
     manifest = yaml.safe_load((DOCUMENTATION / "manifest.yaml").read_text())
-    assert manifest["metadata"]["producerBuildId"] == ("2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b")
+    assert manifest["metadata"]["producerBuildId"] == ("1e9105dabe022a58047ed2dd83a7353478f925aa")
     assert manifest["provenance"]["sourceCommit"] == manifest["metadata"]["producerBuildId"]
     openapi = manifest["contracts"]["openapi"]
     descriptor = manifest["contracts"]["mcp"]
@@ -24,7 +24,7 @@ def test_documentation_contracts_pin_exact_source_release() -> None:
     assert descriptor["digest"] == descriptor["descriptorDigest"]
     assert descriptor["digest"] == _digest(DOCUMENTATION / descriptor["path"])
     assert openapi["digest"] == (
-        "sha256:a1b68d7f8a76807b55e8707c49b88679e9a2ef288bc5d8d9966dd1fd4cafab60"
+        "sha256:b085ddac0d23bdf2ea307f0055685d55865a261804a647ef2d7de9da2f7bbacf"
     )
 
 
@@ -34,6 +34,8 @@ def test_http_only_descriptor_and_exact_operations_are_preserved() -> None:
     assert descriptor["fuseApiVersion"] == "2.0.0"
     assert descriptor["profile"] == "juntai.fuse.profile.mcp/v1"
     assert descriptor["tools"] == []
+    assert descriptor["serviceVersion"] == "1.2.0"
+    assert openapi["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
     operations = {
         operation["operationId"]
         for path in openapi["paths"].values()

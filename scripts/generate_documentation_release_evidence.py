@@ -9,7 +9,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-DOCUMENTED_SOURCE_COMMIT = "2a4bd9ec4d33c8a7ef2d0f5ca1ee9155208ffa5b"
+DOCUMENTED_SOURCE_COMMIT = "1e9105dabe022a58047ed2dd83a7353478f925aa"
 
 
 def _canonical(value: object) -> bytes:
@@ -59,7 +59,7 @@ def main() -> int:
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
-        "name": "juntai-synthetic-data-generation-documentation-1.0.0",
+        "name": "juntai-synthetic-data-generation-documentation-1.2.0",
         "documentNamespace": f"https://github.com/{args.repository}/actions/runs/{args.run_id}/sbom",
         "creationInfo": {
             "created": _created_at(),
@@ -69,7 +69,7 @@ def main() -> int:
             {
                 "name": item["name"],
                 "SPDXID": f"SPDXRef-Package-{index}",
-                "versionInfo": "1.0.0",
+                "versionInfo": "1.2.0",
                 "downloadLocation": "NOASSERTION",
                 "filesAnalyzed": False,
                 "checksums": [{"algorithm": "SHA256", "checksumValue": item["digest"]["sha256"]}],
@@ -92,7 +92,7 @@ def main() -> int:
                     "release-documentation.yml@refs/heads/main"
                 ),
                 "externalParameters": {
-                    "bundleVersion": "1.0.0",
+                    "bundleVersion": "1.2.0",
                     "documentedSourceCommit": DOCUMENTED_SOURCE_COMMIT,
                 },
                 "internalParameters": {},
@@ -123,7 +123,7 @@ def main() -> int:
         "repository": args.repository,
         "releaseCommit": args.release_commit,
         "documentedSourceCommit": DOCUMENTED_SOURCE_COMMIT,
-        "version": "1.0.0",
+        "version": "1.2.0",
         "documentationCapabilityVersion": "1.0.0",
         "documentationCapabilitySource": "d7cd9b6860b7a716b210efdf66ae20e0f1d87a33",
         "documentationCapabilityWheelDigest": (

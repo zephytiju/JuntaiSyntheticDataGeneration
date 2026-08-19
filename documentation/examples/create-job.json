@@ -61,6 +61,7 @@
       "seed": "documentation-example-v1"
     },
     "headers": {
+      "Authorization": "Bearer <access-token-aud-juntai.synthetic-data.api>",
       "Idempotency-Key": "documentation-example-create-v1"
     },
     "method": "POST",
