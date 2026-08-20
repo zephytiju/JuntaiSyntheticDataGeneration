@@ -25,13 +25,18 @@ versioned. Payload bytes and OCI/KES credentials are never returned by this API.
 
 ```bash
 python -m venv .venv
-JUNTAI_PLATFORM_REPOSITORY=/path/to/exact/JuntaiPlatformInfrastructure \
-  sh scripts/prepare-external-dependencies.sh
+# Materialize the independently verified, officially published Platform adapter tuple into
+# .platform-adapters and the published IAM wheels into .iam-artifacts.
 .venv/bin/pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
 .venv/bin/ruff check .
 .venv/bin/pytest
 .venv/bin/python -m build
 ```
+
+Synthetic does not read or rebuild private Platform source. CI and image publication remain
+fail-closed until the official immutable adapter coordinates, manifest, checksums, signature, and
+provenance are pinned and independently verified. The image build consumes only the resulting
+verified adapter artifact directory.
 
 Production runs must set `JUNTAI_WORKER_IMAGE_DIGEST` to the published GHCR digest, use mTLS for
 the internal Artifact Registry, and inject OCI credentials through the standard workload path.

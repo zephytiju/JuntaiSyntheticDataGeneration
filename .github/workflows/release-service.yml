@@ -44,11 +44,8 @@ jobs:
           git checkout --detach "$release_sha"
           test "$(git rev-parse HEAD)" = "$release_sha"
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "$VERSION"
-      - name: Prepare exact IAM and Platform adapter artifacts
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: sh scripts/prepare-external-dependencies.sh
+      - name: Require official immutable Platform adapter publication
+        run: sh scripts/require-published-platform-adapters.sh
       - name: Resolve and verify the already-published exact source image
         run: |
           docker buildx imagetools inspect "$IMAGE:sha-$RELEASE_SHA" --raw > /tmp/image-index.json

@@ -22,11 +22,8 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - name: Prepare exact IAM and Platform adapter artifacts
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: sh scripts/prepare-external-dependencies.sh
+      - name: Require official immutable Platform adapter publication
+        run: sh scripts/require-published-platform-adapters.sh
       - run: python -m pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
       - run: ruff check .
       - run: ruff format --check .

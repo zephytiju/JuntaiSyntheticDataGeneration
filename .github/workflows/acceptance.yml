@@ -27,11 +27,10 @@ permissions:
   packages: read
 
 jobs:
-  licensed-kes-and-kafka:
+  licensed-kes:
     runs-on: [self-hosted, juntai-platform]
     env:
       IMAGE: ghcr.io/zephytiju/juntai-synthetic-data-generation
-      PLATFORM_ADAPTER_EVIDENCE_COMMIT: 9095fde4bee086fd62a2868cabc079a0917af84d
     steps:
       - uses: actions/checkout@v5
         with:
@@ -40,9 +39,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -58,18 +54,6 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
           docker pull "$IMAGE@$IMAGE_DIGEST"
           docker tag "$IMAGE@$IMAGE_DIGEST" juntai-synthetic-data-generation:release-acceptance
-      - name: Check out exact Platform ledger/backend source
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: |
-          token="${JUNTAI_UPSTREAM_AUDIT_TOKEN:-${GITHUB_TOKEN}}"
-          GH_TOKEN="$token" gh repo clone zephytiju/JuntaiPlatformInfrastructure \
-            "$RUNNER_TEMP/juntai-platform" -- --filter=blob:none
-          git -C "$RUNNER_TEMP/juntai-platform" checkout --detach \
-            "$PLATFORM_ADAPTER_EVIDENCE_COMMIT"
-          test "$(git -C "$RUNNER_TEMP/juntai-platform" rev-parse HEAD)" = \
-            "$PLATFORM_ADAPTER_EVIDENCE_COMMIT"
       - name: Run Synthetic licensed-KES migration/relay/replay/rollback suite
         env:
           JUNTAI_SOURCE_REVISION: ${{ inputs.source_revision }}
@@ -78,19 +62,7 @@ jobs:
           sh scripts/run-real-kes-acceptance.sh \
             juntai-synthetic-data-generation:release-acceptance \
             "$RUNNER_TEMP/synthetic-real-kes-acceptance.json"
-      - name: Run Platform licensed-KES durable-ledger suite
-        working-directory: ${{ runner.temp }}/juntai-platform
-        run: |
-          npm ci
-          npm run build
-          scripts/run-real-worker-ledger-acceptance.sh 2>&1 | \
-            tee "$RUNNER_TEMP/platform-worker-ledger-acceptance.log"
-      - name: Run exact Kafka 4.1.1 backend suite
-        working-directory: ${{ runner.temp }}/juntai-platform
-        run: |
-          scripts/run-real-queue-kafka-acceptance.sh 2>&1 | \
-            tee "$RUNNER_TEMP/platform-kafka-acceptance.log"
-      - name: Record exact cross-repository identities
+      - name: Record exact Synthetic and IAM identities
         env:
           SOURCE_REVISION: ${{ inputs.source_revision }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
@@ -98,7 +70,6 @@ jobs:
           printf '%s\n' \
             "syntheticSource=$SOURCE_REVISION" \
             "syntheticImage=$IMAGE@$IMAGE_DIGEST" \
-            "platformAdapterEvidence=$PLATFORM_ADAPTER_EVIDENCE_COMMIT" \
             "iam=1.1.0@72b481ed825c00d0bd96feca67790e90dc5ace9b" \
             "iamContracts=1.1.1@a37b6d6daaba75efd8c15c19b440a3081ba761c5" \
             > "$RUNNER_TEMP/release-acceptance-identities.txt"
@@ -107,8 +78,6 @@ jobs:
           name: synthetic-data-release-acceptance-${{ inputs.source_revision }}
           path: |
             ${{ runner.temp }}/synthetic-real-kes-acceptance.json
-            ${{ runner.temp }}/platform-worker-ledger-acceptance.log
-            ${{ runner.temp }}/platform-kafka-acceptance.log
             ${{ runner.temp }}/release-acceptance-identities.txt
           if-no-files-found: error
           retention-days: 90

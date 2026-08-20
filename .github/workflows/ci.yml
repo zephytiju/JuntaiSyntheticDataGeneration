@@ -8,9 +8,6 @@ on:
 permissions:
   contents: read
 
-env:
-  PLATFORM_ADAPTER_EVIDENCE_COMMIT: 9095fde4bee086fd62a2868cabc079a0917af84d
-
 jobs:
   test:
     name: Python ${{ matrix.python-version }}
@@ -25,11 +22,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Prepare exact IAM and Platform adapter artifacts
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: sh scripts/prepare-external-dependencies.sh
+      - name: Require official immutable Platform adapter publication
+        run: sh scripts/require-published-platform-adapters.sh
       - run: python -m pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
       - run: ruff check .
       - run: ruff format --check .
@@ -60,11 +54,8 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - name: Prepare exact IAM and Platform adapter artifacts
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: sh scripts/prepare-external-dependencies.sh
+      - name: Require official immutable Platform adapter publication
+        run: sh scripts/require-published-platform-adapters.sh
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -104,11 +95,8 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - name: Prepare exact IAM and Platform adapter artifacts
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: sh scripts/prepare-external-dependencies.sh
+      - name: Require official immutable Platform adapter publication
+        run: sh scripts/require-published-platform-adapters.sh
       - name: Install service and exact Documentation Capability release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -161,53 +149,3 @@ jobs:
           path: /tmp/release-assets/*
           if-no-files-found: error
           retention-days: 90
-
-  real-kafka:
-    name: Exact Platform Kafka 4.1.1
-    runs-on: ubuntu-latest
-    services:
-      kafka:
-        image: apache/kafka@sha256:0bc1bb2478f45b6cea78864df86acdc11e8df2c5172477819a4d12942cbe5d40
-        ports:
-          - 9092:9092
-        env:
-          KAFKA_NODE_ID: 1
-          KAFKA_PROCESS_ROLES: broker,controller
-          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
-          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
-          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-        options: >-
-          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: Check out the exact Platform backend source
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
-        run: |
-          token="${JUNTAI_UPSTREAM_AUDIT_TOKEN:-${GITHUB_TOKEN}}"
-          GH_TOKEN="$token" gh repo clone zephytiju/JuntaiPlatformInfrastructure \
-            "$RUNNER_TEMP/juntai-platform" -- --filter=blob:none
-          git -C "$RUNNER_TEMP/juntai-platform" checkout --detach "$PLATFORM_ADAPTER_EVIDENCE_COMMIT"
-          test "$(git -C "$RUNNER_TEMP/juntai-platform" rev-parse HEAD)" = \
-            "$PLATFORM_ADAPTER_EVIDENCE_COMMIT"
-      - name: Run the exact Platform-ledger Kafka transaction
-        working-directory: ${{ runner.temp }}/juntai-platform
-        env:
-          RUN_REAL_QUEUE_KAFKA_PROVIDER: "1"
-          JUNTAI_REAL_KAFKA_BROKER: 127.0.0.1:9092
-        run: |
-          npm ci
-          npx vitest run tests/integration/queue-kafka-provider.test.ts
