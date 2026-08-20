@@ -3,6 +3,14 @@ name: Release immutable documentation capability
 on:
   push:
     tags: ["synthetic-data-docs-v1.2.0"]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing annotated documentation release tag
+        required: true
+        type: choice
+        options:
+          - synthetic-data-docs-v1.2.0
 
 permissions:
   contents: write
@@ -16,18 +24,33 @@ jobs:
       DOCUMENTED_SOURCE_COMMIT: a7511342311e84baf9f65045b8c9e72d4b3f23bd
       DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
       DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
+      EXPECTED_RELEASE_COMMIT: b67c6fe17e94f62856c421ebd1cddebcea2e5540
+      RELEASE_TAG: synthetic-data-docs-v1.2.0
+      REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: refs/tags/synthetic-data-docs-v1.2.0
+      - name: Verify exact existing annotated release tag
+        run: |
+          if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then
+            test "$REQUESTED_RELEASE_TAG" = "$RELEASE_TAG"
+          else
+            test "$GITHUB_EVENT_NAME" = push
+            test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          fi
+          tag_ref="refs/tags/$RELEASE_TAG"
+          test "$(git cat-file -t "$tag_ref")" = tag
+          release_commit="$(git rev-parse HEAD)"
+          test "$release_commit" = "$EXPECTED_RELEASE_COMMIT"
+          test "$(git rev-list -n 1 "$tag_ref")" = "$release_commit"
+          git merge-base --is-ancestor "$release_commit" origin/main
+          echo "RELEASE_COMMIT=$release_commit" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
-      - name: Verify exact release identity
-        run: |
-          test "$GITHUB_REF_NAME" = synthetic-data-docs-v1.2.0
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - name: Install service and exact Documentation Capability release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,7 +84,7 @@ jobs:
           python scripts/generate_documentation_publication.py \
             --build dist/capability \
             --out dist/release-assets \
-            --release-tag "$GITHUB_REF_NAME" \
+            --release-tag "$RELEASE_TAG" \
             --attestation-id "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           juntai-capability verify \
             --bundle dist/capability \
@@ -83,7 +106,7 @@ jobs:
             python scripts/generate_documentation_release_evidence.py \
               --assets dist/release-assets \
               --repository "$GITHUB_REPOSITORY" \
-              --release-commit "$GITHUB_SHA" \
+              --release-commit "$RELEASE_COMMIT" \
               --run-id "$GITHUB_RUN_ID"
       - uses: actions/attest-build-provenance@v3
         with:
@@ -92,7 +115,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME"
+          gh release create "$RELEASE_TAG"
           dist/release-assets/*
           --draft
           --verify-tag
@@ -102,5 +125,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release edit "$GITHUB_REF_NAME" --draft=false
-          gh release view "$GITHUB_REF_NAME" --json isImmutable --jq '.isImmutable' | grep -x true
+          gh release edit "$RELEASE_TAG" --draft=false
+          gh release view "$RELEASE_TAG" --json isImmutable --jq '.isImmutable' | grep -x true
