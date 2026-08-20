@@ -16,7 +16,7 @@ def _digest(path: Path) -> str:
 
 def test_documentation_contracts_pin_exact_source_release() -> None:
     manifest = yaml.safe_load((DOCUMENTATION / "manifest.yaml").read_text())
-    assert manifest["metadata"]["producerBuildId"] == ("5e0a11759457b76f4ed8e232128921a78c710806")
+    assert manifest["metadata"]["producerBuildId"] == ("7e42eea5ead03e889e8465f29339222d879bd536")
     assert manifest["provenance"]["sourceCommit"] == manifest["metadata"]["producerBuildId"]
     openapi = manifest["contracts"]["openapi"]
     descriptor = manifest["contracts"]["mcp"]

@@ -13,7 +13,7 @@ from juntai_synthetic_data.api import build_job_group
 from juntai_synthetic_data.service import SyntheticDataService
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCUMENTED_SOURCE_COMMIT = "5e0a11759457b76f4ed8e232128921a78c710806"
+DOCUMENTED_SOURCE_COMMIT = "7e42eea5ead03e889e8465f29339222d879bd536"
 OPENAPI_DIGEST = "sha256:ae36c89103a4cf341111c2001ab35ae76f06335d9d5168bdd29d637c4837ee2b"
 
 

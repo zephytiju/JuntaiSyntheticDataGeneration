@@ -4,15 +4,15 @@ metadata:
   bundleId: synthetic-data-generation.service
   version: 1.3.0
   ownerKey: synthetic-data-generation
-  producerBuildId: 5e0a11759457b76f4ed8e232128921a78c710806
+  producerBuildId: 7e42eea5ead03e889e8465f29339222d879bd536
 contracts:
   openapi:
     path: contracts/openapi.json
     digest: sha256:ae36c89103a4cf341111c2001ab35ae76f06335d9d5168bdd29d637c4837ee2b
   mcp:
     path: contracts/mcp-descriptor.json
-    digest: sha256:a6a1462a13b2aaade505120cb6e661613d00e0e067c04df099120c2044f11d94
-    descriptorDigest: sha256:a6a1462a13b2aaade505120cb6e661613d00e0e067c04df099120c2044f11d94
+    digest: sha256:20e4336720ed956c132671e12755e303114de9ef8d78ecc9e6faf65e41238f75
+    descriptorDigest: sha256:20e4336720ed956c132671e12755e303114de9ef8d78ecc9e6faf65e41238f75
 sources:
   root: .
   units:
@@ -201,7 +201,7 @@ publication:
   routeKey: platform.documentation
 provenance:
   sourceRepository: https://github.com/zephytiju/JuntaiSyntheticDataGeneration
-  sourceCommit: 5e0a11759457b76f4ed8e232128921a78c710806
+  sourceCommit: 7e42eea5ead03e889e8465f29339222d879bd536
   packagerVersion: 1.0.0
   rendererVersions:
     human: 1.0.0
@@ -226,7 +226,7 @@ provenance:
         value: 6b177928-e92f-4e11-ac7d-965b042eafbd
       - selectorId: documentedSourceCommit
         valueType: string
-        value: 5e0a11759457b76f4ed8e232128921a78c710806
+        value: 7e42eea5ead03e889e8465f29339222d879bd536
     observedAt: "2026-08-20T21:39:03Z"
     access:
       authorizationPolicyId: data-intel-platform.documentation-release-read
