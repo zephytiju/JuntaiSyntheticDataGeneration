@@ -2,7 +2,7 @@ name: Release immutable documentation capability
 
 on:
   push:
-    tags: ["synthetic-data-docs-v1.2.0"]
+    tags: ["synthetic-data-docs-v1.3.0"]
   workflow_dispatch:
     inputs:
       release_tag:
@@ -10,7 +10,7 @@ on:
         required: true
         type: choice
         options:
-          - synthetic-data-docs-v1.2.0
+          - synthetic-data-docs-v1.3.0
 
 permissions:
   contents: write
@@ -21,17 +21,16 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      DOCUMENTED_SOURCE_COMMIT: a7511342311e84baf9f65045b8c9e72d4b3f23bd
+      DOCUMENTED_SOURCE_COMMIT: 5e0a11759457b76f4ed8e232128921a78c710806
       DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
       DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
-      EXPECTED_RELEASE_COMMIT: b67c6fe17e94f62856c421ebd1cddebcea2e5540
-      RELEASE_TAG: synthetic-data-docs-v1.2.0
+      RELEASE_TAG: synthetic-data-docs-v1.3.0
       REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: refs/tags/synthetic-data-docs-v1.2.0
+          ref: refs/tags/synthetic-data-docs-v1.3.0
       - name: Verify exact existing annotated release tag
         run: |
           if test "$GITHUB_EVENT_NAME" = workflow_dispatch; then
@@ -43,19 +42,24 @@ jobs:
           tag_ref="refs/tags/$RELEASE_TAG"
           test "$(git cat-file -t "$tag_ref")" = tag
           release_commit="$(git rev-parse HEAD)"
-          test "$release_commit" = "$EXPECTED_RELEASE_COMMIT"
           test "$(git rev-list -n 1 "$tag_ref")" = "$release_commit"
           git merge-base --is-ancestor "$release_commit" origin/main
+          git merge-base --is-ancestor "$DOCUMENTED_SOURCE_COMMIT" "$release_commit"
           echo "RELEASE_COMMIT=$release_commit" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
+      - name: Prepare exact IAM and Platform adapter artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
+        run: sh scripts/prepare-external-dependencies.sh
       - name: Install service and exact Documentation Capability release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python -m pip install -e '.[test]'
+          python -m pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
           python -m pip install 'juntai-fuse-api[http]==2.0.0'
           gh release download v1.0.0 \
             --repo zephytiju/JuntaiDocumentationCapabilityBundle \
@@ -119,8 +123,8 @@ jobs:
           dist/release-assets/*
           --draft
           --verify-tag
-          --title "Synthetic Data documentation capability 1.2.0"
-          --notes "Exact service-owned bearer-IAM, SWP/v1, worker-isolation, API, migration, and recovery documentation bound to Synthetic source a7511342311e84baf9f65045b8c9e72d4b3f23bd and JuntaiDocumentationCapabilityBundle v1.0.0. The synthetic-data-docs-v1.0.0 release remains unchanged."
+          --title "Synthetic Data documentation capability 1.3.0"
+          --notes "Exact service-owned bearer-IAM 1.1, transactional relay, remote SWP/v1 worker stream, API, migration, and recovery documentation bound to Synthetic source $DOCUMENTED_SOURCE_COMMIT and JuntaiDocumentationCapabilityBundle v1.0.0. Prior immutable documentation releases remain unchanged."
       - name: Publish and lock immutable release
         env:
           GH_TOKEN: ${{ github.token }}

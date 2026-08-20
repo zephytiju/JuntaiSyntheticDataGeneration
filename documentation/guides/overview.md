@@ -1,6 +1,6 @@
 # Synthetic Data Generation
 
-Synthetic Data Generation 1.2.0 creates bounded, deterministic candidate datasets as immutable
+Synthetic Data Generation 1.3.0 creates bounded, deterministic candidate datasets as immutable
 Artifacts. The service owns asynchronous jobs, structural contract validation, provider selection,
 privacy policy, quota reservation, the `juntai.synthetic.worker/v1` protocol, isolated generation,
 optional exact validator execution, publication, and provenance.
@@ -20,8 +20,13 @@ The output is an immutable dataset Artifact. It is not imported application data
 The service accepts generic record families, primitive field types, distributions, relations, limits, output format, policy, provider requirements, seed, and an optional exact validator Artifact. It does not interpret product-domain meaning, receive target-store credentials, ingest results, deploy previews, or promote data.
 
 The API coordinator alone writes Synthetic job metadata in KES. Platform owns the durable SWP
-dispatch, control, result, and dead-letter queues and the generic executor sidecar. The worker owns
-generation and immutable Artifact publication behind one canonical framed Unix socket. It has no
+dispatch, control, result, and dead-letter queues, generic delivery ledger, and executor Deployment.
+The relay reaches only the executor's authenticated QueueTransport listener on the injected literal
+ClusterIP:7444; it receives no Kafka or Platform-ledger credential and remote readiness must pass
+before a Synthetic KES outbox lease.
+Each committed claim creates a separately fenced worker Job Pod. The worker owns generation and
+immutable Artifact publication behind the authenticated remote SWP stream. The Unix socket remains
+local-test framing only. The worker has no
 KES, queue, Synthetic API, or Kubernetes API capability.
 
 The pinned FuseAPI 2.0.0 MCP descriptor contains no Tools because this release exposes HTTP only.
@@ -30,8 +35,7 @@ not invent MCP Tools or Prompts.
 
 ## Exact release binding
 
-- Service source: `a7511342311e84baf9f65045b8c9e72d4b3f23bd`.
-- OpenAPI: `sha256:26200a846179369af5c7f86e248f8eb1fa8085d62ddde994812ba348e68c93a8`.
-- MCP descriptor: `sha256:ca13c264d709c36382c02f9c120152b2c45765ae559d8a71529bdc1b60c89d21`.
+- Service source, image, OpenAPI, MCP descriptor, SWP schema, queue adapter, stream client, and
+  documentation/capability digests are populated only by the final immutable 1.3.0 release build.
 - SWP schema: `contracts/worker-protocol/swp.v1.schema.json` in the service release.
 - Documentation packager and renderers: `JuntaiDocumentationCapabilityBundle` `v1.0.0`

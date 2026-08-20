@@ -18,8 +18,14 @@
   closed and investigate transport/integrity evidence; never acknowledge as success.
 - `ATTEMPT_STALE` or `RESULT_DUPLICATE`: do not reapply job state. Record cleanup evidence for any
   newly published orphan Artifact.
-- `WORKER_EXITED` or retryable `DEPENDENCY_UNAVAILABLE`: redeliver with full-jitter backoff inside
-  the original deadline and delivery budget.
+- `WORKER_EXITED` or retryable `DEPENDENCY_UNAVAILABLE`: Platform applies full-jitter scheduling
+  inside the original deadline and durable five-generation budget; Synthetic does not count claims.
+- `SWP_DEADLINE_EXCEEDED` or `SWP_DEPENDENCY_UNAVAILABLE` while awaiting `ResultAccepted`: close
+  the old Attach client, reauthenticate the same live claim, verify the dispatch bytes are identical,
+  and resend only the identical pending result tuple once. Never rerun the engine or treat enqueue as
+  acceptance.
+- `SWP_RESULT_CONFLICT`, `SWP_SEQUENCE_INVALID`, `SWP_SESSION_CLOSED`, or changed replayed dispatch:
+  fail closed. Do not alter the result frame, infer ledger state, or open a new claim generation.
 - `DELIVERY_EXHAUSTED`: inspect the dead-letter record and immutable evidence. Automated retries
   stop after five deliveries.
 - `ARTIFACT_INTEGRITY_FAILED`: do not associate the output; exact coordinates, tenant, media type,

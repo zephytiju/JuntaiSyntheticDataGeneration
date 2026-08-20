@@ -6,6 +6,7 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ import psycopg
 
 from juntai_synthetic_data.api import build_server
 from juntai_synthetic_data.contracts.models import CreateJobRequest
+from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.execution import WorkerCoordinator
 from juntai_synthetic_data.jobs import SqlJobRepository
 from juntai_synthetic_data.migration import (
@@ -28,13 +30,12 @@ from juntai_synthetic_data.policy import DefaultPolicyEngine
 from juntai_synthetic_data.providers import DeterministicTabularProvider, ProviderRegistry
 from juntai_synthetic_data.publication import PublishedDataset
 from juntai_synthetic_data.quotas import InMemoryQuotaLedger, QuotaLimits
+from juntai_synthetic_data.relay.models import DeadLetterRecord, dead_letter_record_digest
 from juntai_synthetic_data.service import SyntheticDataService
 from juntai_synthetic_data.worker import SocketWorker, validate_worker_isolation
 from juntai_synthetic_data.worker_protocol import (
     EVIDENCE_MEDIA_TYPE,
     INPUT_MEDIA_TYPE,
-    PROTOCOL_VERSION,
-    SOCKET_PATH,
     DispatchEnvelope,
     ExactArtifactReference,
     ProgressBounds,
@@ -75,7 +76,7 @@ def _empty_repeat_and_check(dsn: str, binding: MigrationBinding) -> None:
     first = apply_migrations(dsn, binding)
     second = apply_migrations(dsn, binding)
     checked = apply_migrations(dsn, binding, check=True)
-    assert first.applied == ("0001_jobs", "0002_worker_protocol")
+    assert first.applied == ("0001_jobs", "0002_worker_protocol", "0003_transport_relay")
     assert second.status == "current"
     assert checked.status == "current"
 
@@ -84,14 +85,24 @@ def _concurrency(dsn: str, binding: MigrationBinding) -> None:
     _reset(dsn)
     with ThreadPoolExecutor(max_workers=4) as executor:
         results = list(executor.map(lambda _: apply_migrations(dsn, binding), range(4)))
-    assert sum(result.applied == ("0001_jobs", "0002_worker_protocol") for result in results) == 1
+    assert (
+        sum(
+            result.applied == ("0001_jobs", "0002_worker_protocol", "0003_transport_relay")
+            for result in results
+        )
+        == 1
+    )
     assert sum(result.status == "current" for result in results) == 3
     rows = _execute(
         dsn,
         "SELECT migration_id, count(*) FROM juntai_synthetic_data.schema_migrations "
         "GROUP BY migration_id ORDER BY migration_id",
     )
-    assert rows == [("0001_jobs", 1), ("0002_worker_protocol", 1)], rows
+    assert rows == [
+        ("0001_jobs", 1),
+        ("0002_worker_protocol", 1),
+        ("0003_transport_relay", 1),
+    ], rows
 
 
 def _partial_failure(dsn: str, binding: MigrationBinding) -> None:
@@ -113,20 +124,32 @@ def _partial_failure(dsn: str, binding: MigrationBinding) -> None:
     assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.jobs')") == [(None,)]
     assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.must_rollback')") == [(None,)]
     recovered = apply_migrations(dsn, binding)
-    assert recovered.applied == ("0001_jobs", "0002_worker_protocol")
+    assert recovered.applied == (
+        "0001_jobs",
+        "0002_worker_protocol",
+        "0003_transport_relay",
+    )
 
 
 def _released_baseline_upgrade(dsn: str, binding: MigrationBinding) -> None:
     _reset(dsn)
-    baseline = load_migrations()[0]
-    released = MigrationBinding(
+    baseline, worker_protocol, _relay = load_migrations()
+    released_1_1 = MigrationBinding(
         source_revision="81c4b28336be46c57654d9de569ffefc803714f0",
         image_digest="sha256:" + "1" * 64,
         service_version="1.1.0",
     )
-    assert apply_migrations(dsn, released, migrations=(baseline,)).applied == ("0001_jobs",)
+    assert apply_migrations(dsn, released_1_1, migrations=(baseline,)).applied == ("0001_jobs",)
+    released_1_2 = MigrationBinding(
+        source_revision="b67c6fe17e94f62856c421ebd1cddebcea2e5540",
+        image_digest="sha256:8b85d4c293a956c484e3871b4bad428f7815a72cad84a01261add1c90fe0fcfd",
+        service_version="1.2.0",
+    )
+    assert apply_migrations(dsn, released_1_2, migrations=(baseline, worker_protocol)).applied == (
+        "0002_worker_protocol",
+    )
     result = apply_migrations(dsn, binding)
-    assert result.applied == ("0002_worker_protocol",)
+    assert result.applied == ("0003_transport_relay",)
     rows = _execute(
         dsn,
         "SELECT migration_id, service_version, adopted_from_baseline "
@@ -135,6 +158,7 @@ def _released_baseline_upgrade(dsn: str, binding: MigrationBinding) -> None:
     assert rows == [
         ("0001_jobs", "1.1.0", False),
         ("0002_worker_protocol", "1.2.0", False),
+        ("0003_transport_relay", "1.3.0", False),
     ]
 
 
@@ -195,6 +219,33 @@ def _tenant_isolation(dsn: str) -> None:
                 """,
                 (tenant, job, attempt, f"cleanup-{suffix}"),
             )
+            cursor.execute(
+                """
+                INSERT INTO juntai_synthetic_data.worker_dead_letter_inbox (
+                    tenant_id, job_id, attempt_id, dead_letter_id, original_channel,
+                    message_id, content_digest, original_content_digest, record_digest,
+                    canonical_bytes,
+                    delivery_count,
+                    producer_namespace, producer_service_account, terminal_reason_code,
+                    ledger_evidence_id, disposition
+                ) VALUES (%s, %s, %s, %s, 'synthetic.worker.result.v1', %s, %s, %s, %s,
+                          %s,
+                          5, 'juntai', 'synthetic-executor', 'DELIVERY_EXHAUSTED',
+                          %s, 'DELIVERY_EXHAUSTED')
+                """,
+                (
+                    tenant,
+                    job,
+                    attempt,
+                    f"dead-letter-{suffix}",
+                    f"message-{suffix}",
+                    "sha256:" + "5" * 64,
+                    "sha256:" + "5" * 64,
+                    "sha256:" + "6" * 64,
+                    b"{}",
+                    f"ledger-evidence-{suffix}",
+                ),
+            )
         cursor.execute(f"SET ROLE {role}")
         cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-a', false)")
         cursor.execute("SELECT tenant_id, job_id FROM juntai_synthetic_data.jobs ORDER BY job_id")
@@ -204,6 +255,7 @@ def _tenant_isolation(dsn: str) -> None:
             "worker_outbox",
             "worker_result_inbox",
             "worker_cleanup_evidence",
+            "worker_dead_letter_inbox",
         ):
             cursor.execute(f"SELECT tenant_id FROM juntai_synthetic_data.{table}")
             assert cursor.fetchall() == [("tenant-a",)]
@@ -215,6 +267,7 @@ def _tenant_isolation(dsn: str) -> None:
             "worker_outbox",
             "worker_result_inbox",
             "worker_cleanup_evidence",
+            "worker_dead_letter_inbox",
         ):
             cursor.execute(f"SELECT tenant_id FROM juntai_synthetic_data.{table}")
             assert cursor.fetchall() == [("tenant-b",)]
@@ -372,6 +425,35 @@ def _api_worker_startup(dsn: str) -> None:
     )
     dispatch = decode_envelope(bytes(rows[0][0]))
     assert isinstance(dispatch, DispatchEnvelope)
+    lease_now = datetime.now(UTC)
+    first_lease = repository.lease_outbox(
+        relay_id="kes-relay-a", limit=10, now=lease_now, lease_seconds=60
+    )
+    assert len(first_lease) == 1
+    assert (
+        repository.lease_outbox(relay_id="kes-relay-b", limit=10, now=lease_now, lease_seconds=60)
+        == ()
+    )
+    recovered_lease = repository.lease_outbox(
+        relay_id="kes-relay-b",
+        limit=10,
+        now=lease_now + timedelta(seconds=61),
+        lease_seconds=60,
+    )
+    assert len(recovered_lease) == 1
+    assert recovered_lease[0].canonical_bytes == dispatch.canonical_bytes()
+    assert not repository.mark_outbox_published(
+        first_lease[0].message_id,
+        first_lease[0].lease_token,
+        publication_id="publication-stale",
+        published_at=lease_now + timedelta(seconds=61),
+    )
+    assert repository.mark_outbox_published(
+        recovered_lease[0].message_id,
+        recovered_lease[0].lease_token,
+        publication_id="publication-exact",
+        published_at=lease_now + timedelta(seconds=61),
+    )
     service.accept_worker_event(
         _worker_event(
             dispatch,
@@ -404,16 +486,51 @@ def _api_worker_startup(dsn: str) -> None:
     assert service.accept_worker_event(terminal, authenticated_producer=executor) == (
         "RESULT_DUPLICATE"
     )
+    result_conflict = terminal.model_copy(update={"sequence": 3, "content_digest": None}).signed()
+    try:
+        service.accept_worker_event(result_conflict, authenticated_producer=executor)
+    except SyntheticDataError as error:
+        assert error.code is ErrorCode.CONCURRENCY_CONFLICT
+        assert error.details["protocol_error"] == "RESULT_CONFLICT"
+    else:
+        raise AssertionError("changed content for one result event identity did not conflict")
+    assert repository.worker_event_digest(terminal.event_id) == terminal.content_digest
     assert service.get_job("tenant-startup", created.job_id).state.value == "SUCCEEDED"
     assert len(service.result("tenant-startup", created.job_id).artifact.digest) == 71
-
-    validate_worker_isolation(
-        {
-            "JUNTAI_SYNTHETIC_WORKER_PROTOCOL": PROTOCOL_VERSION,
-            "JUNTAI_SYNTHETIC_WORKER_SOCKET": SOCKET_PATH,
-        },
-        mountinfo="tmpfs /var/run/juntai-worker",
+    dead_letter = DeadLetterRecord(
+        dead_letter_id="dlq-kes-terminal-replay",
+        tenant_id=dispatch.tenant_id,
+        job_id=dispatch.job_id,
+        attempt_id=dispatch.attempt_id,
+        original_channel="synthetic.worker.dispatch.v1",
+        message_id=dispatch.message_id,
+        content_digest=dispatch.content_digest or "",
+        original_content_digest=dispatch.content_digest or "",
+        canonical_bytes=dispatch.canonical_bytes(),
+        delivery_count=5,
+        authenticated_producer=api,
+        terminal_reason_code="DELIVERY_EXHAUSTED",
+        ledger_evidence_id="ledger-kes-terminal-replay",
     )
+    assert service.accept_dead_letter(dead_letter) == "ATTEMPT_STALE"
+    assert service.accept_dead_letter(dead_letter) == "DEAD_LETTER_DUPLICATE"
+    dead_letter_conflict = dataclass_replace(
+        dead_letter,
+        content_digest="sha256:" + "8" * 64,
+        canonical_bytes=b"changed-dead-letter-content",
+    )
+    try:
+        service.accept_dead_letter(dead_letter_conflict)
+    except SyntheticDataError as error:
+        assert error.code is ErrorCode.CONCURRENCY_CONFLICT
+        assert error.details["protocol_error"] == "RESULT_CONFLICT"
+    else:
+        raise AssertionError("changed content for one dead-letter identity did not conflict")
+    assert repository.dead_letter_digest(dead_letter.dead_letter_id) == dead_letter_record_digest(
+        dead_letter
+    )
+
+    validate_worker_isolation({}, mountinfo="tmpfs /var/run/juntai-worker-tmp")
     worker = SocketWorker(
         _WorkerEngine(),
         workload=WorkloadIdentity(namespace="juntai", serviceAccount="synthetic-worker"),
@@ -430,12 +547,14 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
     assert apply_migrations(dsn, binding).applied == (
         "0001_jobs",
         "0002_worker_protocol",
+        "0003_transport_relay",
     )
     _tenant_isolation(dsn)
     _reset(dsn)
     assert apply_migrations(dsn, binding).applied == (
         "0001_jobs",
         "0002_worker_protocol",
+        "0003_transport_relay",
     )
     _api_worker_startup(dsn)
     return {
@@ -446,9 +565,12 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
             "concurrency-lock",
             "transactional-partial-failure",
             "transactional-failure-recovery",
-            "released-1.1.0-baseline-upgrade",
+            "released-1.1.0-and-1.2.0-upgrade",
             "tenant-rls-isolation-all-swp-tables",
             "atomic-outbox-result-replay",
+            "relay-lease-expiry-recovery",
+            "dead-letter-state-idempotency",
+            "result-and-dead-letter-conflict-rejection",
             "post-migration-api-startup",
             "post-migration-worker-startup-no-kes",
         ],
@@ -458,7 +580,7 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
 def _post_restart(dsn: str, binding: MigrationBinding) -> dict[str, object]:
     result = apply_migrations(dsn, binding)
     assert result.status == "current"
-    assert result.current == ("0001_jobs", "0002_worker_protocol")
+    assert result.current == ("0001_jobs", "0002_worker_protocol", "0003_transport_relay")
     return {"phase": "post-restart", "checks": ["database-restart", "ledger-current"]}
 
 

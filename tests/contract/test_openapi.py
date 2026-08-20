@@ -16,7 +16,7 @@ def test_fuseapi_openapi_is_deterministic_and_complete() -> None:
     group = build_job_group(make_service())
     generator = OpenAPIArtifactGenerator(fuse_api_version="2.0.0")
     identity = ServiceArtifactIdentity(
-        service="synthetic-data-generation", version="1.2.0", source_commit="a" * 40
+        service="synthetic-data-generation", version="1.3.0", source_commit="a" * 40
     )
     first = generator.generate([group], identity=identity, title="Juntai Synthetic Data Generation")
     second = generator.generate(
@@ -48,7 +48,7 @@ def test_fuseapi_openapi_is_deterministic_and_complete() -> None:
 
 def test_committed_openapi_matches_generated_contract() -> None:
     committed = json.loads((ROOT / "openapi" / "synthetic-data-generation.v1.json").read_text())
-    assert committed["info"]["version"] == "1.2.0"
+    assert committed["info"]["version"] == "1.3.0"
     assert "/v1/jobs/" in committed["paths"]
     assert all(
         operation["security"] == [{"bearerAuth": []}]

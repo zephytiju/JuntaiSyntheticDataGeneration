@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "juntai-synthetic-data-generation"
-version = "1.2.0"
+version = "1.3.0"
 description = "Generic policy-governed asynchronous synthetic dataset generation for Juntai"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,8 +14,11 @@ dependencies = [
   "fastapi==0.141.1",
   "juntai-artifact-client>=1.0.2,<2",
   "juntai-fuse-api[http]==2.0.0",
-  "juntai-iam>=1.0.0,<2",
+  "juntai-iam==1.1.0",
+  "juntai-iam-contracts==1.1.1",
   "juntai-observability>=2.0.5,<3",
+  "juntai-platform-queue-kafka==1.0.0",
+  "juntai-platform-swp-stream==1.0.0",
   "juntai-usage>=1.0.0,<2",
   "psycopg[binary]>=3.2,<4",
   "pydantic==2.13.4",

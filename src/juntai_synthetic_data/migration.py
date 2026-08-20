@@ -355,6 +355,107 @@ def _worker_protocol_state(cursor: Any) -> str:
     return "complete"
 
 
+_RELAY_COLUMNS = {
+    "platform_publication_id",
+    "lease_owner",
+    "lease_token",
+    "lease_expires_at",
+    "publish_attempts",
+    "next_attempt_at",
+    "last_error_code",
+    "last_error_at",
+    "updated_at",
+}
+
+_DEAD_LETTER_COLUMNS = {
+    "tenant_id",
+    "job_id",
+    "attempt_id",
+    "dead_letter_id",
+    "original_channel",
+    "message_id",
+    "content_digest",
+    "original_content_digest",
+    "record_digest",
+    "canonical_bytes",
+    "delivery_count",
+    "producer_namespace",
+    "producer_service_account",
+    "terminal_reason_code",
+    "ledger_evidence_id",
+    "event_id",
+    "disposition",
+    "committed_at",
+}
+
+
+def _transport_relay_state(cursor: Any) -> str:
+    relation = "juntai_synthetic_data.worker_dead_letter_inbox"
+    dead_letter_exists = _relation_exists(cursor, relation)
+    cursor.execute(
+        """
+        SELECT column_name
+          FROM information_schema.columns
+         WHERE table_schema = 'juntai_synthetic_data'
+           AND table_name = 'worker_outbox'
+           AND column_name IN (
+               'platform_publication_id', 'lease_owner', 'lease_token', 'lease_expires_at',
+               'publish_attempts',
+               'next_attempt_at', 'last_error_code', 'last_error_at', 'updated_at'
+           )
+        """
+    )
+    columns = {row[0] for row in cursor.fetchall()}
+    if not dead_letter_exists and not columns:
+        return "absent"
+    if not dead_letter_exists or columns != _RELAY_COLUMNS:
+        return "partial"
+    cursor.execute(
+        """
+        SELECT column_name
+          FROM information_schema.columns
+         WHERE table_schema = 'juntai_synthetic_data'
+           AND table_name = 'worker_dead_letter_inbox'
+        """
+    )
+    if {row[0] for row in cursor.fetchall()} != _DEAD_LETTER_COLUMNS:
+        return "partial"
+    cursor.execute(
+        """
+        SELECT c.relrowsecurity
+          FROM pg_class AS c
+          JOIN pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'juntai_synthetic_data'
+           AND c.relname = 'worker_dead_letter_inbox'
+        """
+    )
+    row = cursor.fetchone()
+    if not row or not row[0]:
+        return "partial"
+    cursor.execute(
+        "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'juntai_synthetic_data'"
+    )
+    if (
+        "worker_dead_letter_inbox",
+        "worker_dead_letter_tenant_isolation",
+    ) not in set(cursor.fetchall()):
+        return "partial"
+    cursor.execute(
+        """
+        SELECT indexname
+          FROM pg_indexes
+         WHERE schemaname = 'juntai_synthetic_data'
+           AND indexname IN ('worker_outbox_relay_ready_idx', 'worker_outbox_lease_expiry_idx')
+        """
+    )
+    if {row[0] for row in cursor.fetchall()} != {
+        "worker_outbox_relay_ready_idx",
+        "worker_outbox_lease_expiry_idx",
+    }:
+        return "partial"
+    return "complete"
+
+
 def _verify_server(cursor: Any, required_prefix: str) -> None:
     cursor.execute("SELECT version()")
     version = str(cursor.fetchone()[0])
@@ -434,6 +535,8 @@ def apply_migrations(
             if check:
                 if not pending and _worker_protocol_state(cursor) != "complete":
                     raise MigrationSafetyError("SWP/v1 schema is incomplete")
+                if not pending and _transport_relay_state(cursor) != "complete":
+                    raise MigrationSafetyError("SWP/v1 transport relay schema is incomplete")
                 status = "pending" if pending else "current"
                 return MigrationResult(
                     status=status,
@@ -472,6 +575,12 @@ def apply_migrations(
                 _worker_protocol_state(cursor) != "complete"
             ):
                 raise MigrationSafetyError("post-migration SWP/v1 schema verification failed")
+            if any(item.migration_id == "0003_transport_relay" for item in ordered) and (
+                _transport_relay_state(cursor) != "complete"
+            ):
+                raise MigrationSafetyError(
+                    "post-migration SWP/v1 transport relay schema verification failed"
+                )
             return MigrationResult(
                 status="applied" if applied or adopted else "current",
                 applied=tuple(applied),

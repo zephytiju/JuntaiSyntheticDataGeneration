@@ -10,6 +10,7 @@ from typing import Protocol
 
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.jobs.models import Job, JobState
+from juntai_synthetic_data.relay.models import DeadLetterRecord, dead_letter_record_digest
 from juntai_synthetic_data.worker_protocol import (
     REQUIRED_CAPABILITIES,
     CancelEnvelope,
@@ -57,12 +58,25 @@ class ProtocolRepository(Protocol):
 
     def worker_event_digest(self, event_id: str) -> str | None: ...
 
+    def worker_attempt_exists(self, tenant_id: str, job_id: str, attempt_id: str) -> bool: ...
+
     def commit_worker_event(
         self,
         job: Job,
         *,
         expected_version: int,
         event: WorkerEventEnvelope,
+        disposition: str,
+    ) -> Job: ...
+
+    def dead_letter_digest(self, dead_letter_id: str) -> str | None: ...
+
+    def commit_dead_letter(
+        self,
+        job: Job,
+        *,
+        expected_version: int,
+        record: DeadLetterRecord,
         disposition: str,
     ) -> Job: ...
 
@@ -226,8 +240,6 @@ class WorkerCoordinator:
                 "result tenant differs from job tenant",
                 details={"protocol_error": "TENANT_MISMATCH"},
             )
-        if event.attempt_id != job.active_attempt_id:
-            return "ATTEMPT_STALE"
         prior_digest = self.repository.worker_event_digest(event.event_id)
         if prior_digest is not None:
             if prior_digest != event.content_digest:
@@ -237,7 +249,21 @@ class WorkerCoordinator:
                     details={"protocol_error": "RESULT_CONFLICT"},
                 )
             return "RESULT_DUPLICATE"
-        if job.terminal:
+        if event.attempt_id != job.active_attempt_id or job.terminal:
+            if not self.repository.worker_attempt_exists(
+                event.tenant_id, event.job_id, event.attempt_id
+            ):
+                raise SyntheticDataError(
+                    ErrorCode.CONTRACT_INVALID,
+                    "worker event names an unknown SWP attempt",
+                    details={"protocol_error": "ATTEMPT_STALE"},
+                )
+            self.repository.commit_worker_event(
+                job,
+                expected_version=job.version,
+                event=event,
+                disposition="ATTEMPT_STALE",
+            )
             return "ATTEMPT_STALE"
         if event.worker_image_digest != job.worker_image_digest:
             raise SyntheticDataError(
@@ -341,5 +367,84 @@ class WorkerCoordinator:
         disposition = "COMMITTED"
         self.repository.commit_worker_event(
             job, expected_version=expected, event=event, disposition=disposition
+        )
+        return disposition
+
+    def accept_dead_letter(self, job: Job, record: DeadLetterRecord) -> str:
+        record_digest = dead_letter_record_digest(record)
+        prior_digest = self.repository.dead_letter_digest(record.dead_letter_id)
+        if prior_digest is not None:
+            if prior_digest != record_digest:
+                raise SyntheticDataError(
+                    ErrorCode.CONCURRENCY_CONFLICT,
+                    "dead-letter identity was reused with different content",
+                    details={"protocol_error": "RESULT_CONFLICT"},
+                )
+            return "DEAD_LETTER_DUPLICATE"
+        expected_producer = (
+            self.executor_workload
+            if record.original_channel == RESULT_CHANNEL
+            else self.api_workload
+        )
+        if record.authenticated_producer != expected_producer:
+            raise SyntheticDataError(
+                ErrorCode.POLICY_DENIED,
+                "dead-letter producer is not the pinned workload",
+                details={"protocol_error": "IDENTITY_MISMATCH"},
+            )
+        if record.tenant_id != job.tenant_id:
+            raise SyntheticDataError(
+                ErrorCode.POLICY_DENIED,
+                "dead-letter tenant differs from job tenant",
+                details={"protocol_error": "TENANT_MISMATCH"},
+            )
+        expected = job.version
+        if record.delivery_count != 5:
+            raise SyntheticDataError(
+                ErrorCode.CONTRACT_INVALID,
+                "dead-letter evidence has an invalid delivery count",
+                details={"protocol_error": "ENVELOPE_INVALID"},
+            )
+        if record.attempt_id != job.active_attempt_id or job.terminal:
+            disposition = "ATTEMPT_STALE"
+        elif record.original_channel == RESULT_CHANNEL and record.event_id is not None:
+            result_digest = self.repository.worker_event_digest(record.event_id)
+            if result_digest is not None:
+                disposition = (
+                    "RESULT_DUPLICATE"
+                    if result_digest == record.content_digest
+                    else "RESULT_CONFLICT"
+                )
+            else:
+                job.fail(
+                    SyntheticDataError(
+                        ErrorCode.DELIVERY_EXHAUSTED,
+                        "SWP message exhausted its five-delivery budget",
+                        details={
+                            "protocol_error": "DELIVERY_EXHAUSTED",
+                            "channel": record.original_channel,
+                        },
+                    )
+                )
+                disposition = "DELIVERY_EXHAUSTED"
+        elif record.original_channel == CONTROL_CHANNEL:
+            disposition = "RECONCILE_CANCELLING"
+        else:
+            job.fail(
+                SyntheticDataError(
+                    ErrorCode.DELIVERY_EXHAUSTED,
+                    "SWP message exhausted its five-delivery budget",
+                    details={
+                        "protocol_error": "DELIVERY_EXHAUSTED",
+                        "channel": record.original_channel,
+                    },
+                )
+            )
+            disposition = "DELIVERY_EXHAUSTED"
+        self.repository.commit_dead_letter(
+            job,
+            expected_version=expected,
+            record=record,
+            disposition=disposition,
         )
         return disposition

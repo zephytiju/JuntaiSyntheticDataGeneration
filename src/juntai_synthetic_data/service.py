@@ -146,6 +146,19 @@ class SyntheticDataService:
             self._release(job)
         return disposition
 
+    def accept_dead_letter(self, record) -> str:
+        if self.coordinator is None:
+            raise SyntheticDataError(
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "SWP coordinator is not configured",
+                retryable=True,
+            )
+        job = self.get_job(record.tenant_id, record.job_id)
+        disposition = self.coordinator.accept_dead_letter(job, record)
+        if job.terminal:
+            self._release(job)
+        return disposition
+
     def run_job(self, tenant_id: str, job_id: str) -> JobStatus:
         job = self.get_job(tenant_id, job_id)
         if job.state is not JobState.QUEUED:

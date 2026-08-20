@@ -4,12 +4,12 @@ set -eu
 kes_image="${JUNTAI_REAL_KES_IMAGE:-kingbase_v009r001c010b0004_single_x86:v1@sha256:0bce318e74adca7a3d619b55b336269017507fd679833b7ce5d8400289661724}"
 service_image="${1:-juntai-synthetic-data-generation:kes-acceptance}"
 evidence_path="${2:-}"
-kes_container="juntai-synthetic-kes-acceptance-01u"
-kes_network="juntai-synthetic-kes-acceptance-01u"
-worker_network="juntai-synthetic-worker-isolation-01v"
-kes_data="juntai-synthetic-kes-data-01u"
-kes_secrets="juntai-synthetic-kes-secrets-01u"
-service_secrets="juntai-synthetic-service-secrets-01u"
+kes_container="juntai-synthetic-kes-acceptance-01aa"
+kes_network="juntai-synthetic-kes-acceptance-01aa"
+worker_network="juntai-synthetic-worker-isolation-01aa"
+kes_data="juntai-synthetic-kes-data-01aa"
+kes_secrets="juntai-synthetic-kes-secrets-01aa"
+service_secrets="juntai-synthetic-service-secrets-01aa"
 acceptance_password="$(openssl rand -hex 24)"
 source_revision="${JUNTAI_SOURCE_REVISION:-$(git rev-parse HEAD)}"
 service_digest="${JUNTAI_SERVICE_IMAGE_DIGEST:-$(docker image inspect "$service_image" --format '{{.Id}}')}"
@@ -37,7 +37,7 @@ docker run --rm --user 0:0 --entrypoint /bin/sh \
   'umask 077
    printf "%s" "$ACCEPTANCE_PASSWORD" > /run/secrets/kes-password
    printf "host=%s port=54321 dbname=kingbase user=synthetic_migration_admin password=%s" \
-     "juntai-synthetic-kes-acceptance-01u" "$ACCEPTANCE_PASSWORD" \
+     "juntai-synthetic-kes-acceptance-01aa" "$ACCEPTANCE_PASSWORD" \
      > /run/service-secrets/kes-dsn
    chown 65532:65532 /run/service-secrets/kes-dsn
    chown 1000:1000 /run/secrets/kes-password
@@ -77,14 +77,12 @@ wait_for_kes() {
 wait_for_kes
 
 worker_isolation_evidence="$(docker run --rm --network "$worker_network" \
-  -e JUNTAI_SYNTHETIC_WORKER_PROTOCOL=juntai.synthetic.worker/v1 \
-  -e JUNTAI_SYNTHETIC_WORKER_SOCKET=/var/run/juntai-worker/swp-v1.sock \
   --entrypoint python "$service_image" -c \
   'import json,socket
 from juntai_synthetic_data.worker import validate_worker_isolation
-validate_worker_isolation(mountinfo="tmpfs /var/run/juntai-worker")
+validate_worker_isolation(mountinfo="tmpfs /var/run/juntai-worker-tmp")
 try:
-    socket.create_connection(("juntai-synthetic-kes-acceptance-01u", 54321), timeout=1)
+    socket.create_connection(("juntai-synthetic-kes-acceptance-01aa", 54321), timeout=1)
 except OSError:
     print(json.dumps({"check":"worker-kes-network-denied","result":"passed"},sort_keys=True))
 else:

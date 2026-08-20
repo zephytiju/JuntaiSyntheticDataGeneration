@@ -6,7 +6,9 @@ import argparse
 import asyncio
 import json
 import os
+import signal
 import sys
+import threading
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -14,6 +16,9 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="mode", required=True)
     commands.add_parser("serve", help="run the API service")
     commands.add_parser("worker", help="run the background worker")
+    relay = commands.add_parser("relay", help="run the service-owned SWP queue relay")
+    relay.add_argument("--once", action="store_true", help="process one bounded relay batch")
+    relay.add_argument("--poll-seconds", type=float, default=1.0)
     migrate = commands.add_parser("migrate", help="apply the ordered KingbaseES migration set")
     migrate.add_argument("--dsn-file", help="absolute path to the KES DSN secret file")
     migrate.add_argument(
@@ -80,13 +85,27 @@ def main() -> int | None:
         )
         server = build_server(service, authorizer=authorizer)
         asyncio.run(server.serve(host=os.getenv("HOST", "0.0.0.0")))
+    elif args.mode == "relay":
+        from juntai_synthetic_data.relay_runtime import build_runtime_relay
+
+        relay = build_runtime_relay()
+        if args.once:
+            print(json.dumps(relay.run_once().__dict__, sort_keys=True))
+            return 0
+        stop = threading.Event()
+
+        def request_stop(_signum: int, _frame: object) -> None:
+            stop.set()
+
+        signal.signal(signal.SIGTERM, request_stop)
+        signal.signal(signal.SIGINT, request_stop)
+        relay.run_forever(stop, poll_seconds=args.poll_seconds)
+        return 0
     else:
-        from juntai_synthetic_data.worker import SOCKET_ENV, SOCKET_PATH, validate_worker_isolation
-
-        validate_worker_isolation()
         from juntai_synthetic_data.worker_runtime import build_worker
+        from juntai_synthetic_data.worker_stream_runtime import run_production_worker
 
-        build_worker().run(socket_path=os.getenv(SOCKET_ENV, SOCKET_PATH))
+        run_production_worker(build_worker)
 
 
 if __name__ == "__main__":

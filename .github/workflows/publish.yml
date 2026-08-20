@@ -2,7 +2,7 @@ name: Publish immutable image and contracts
 
 on:
   push:
-    branches: [main, "agent/synthetic-worker-isolation-v*"]
+    branches: [main, "agent/synthetic-relay-v*"]
     paths-ignore: ["release-evidence/**"]
 
 permissions:
@@ -14,13 +14,20 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.image.outputs.digest }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
-      - run: python -m pip install -e '.[test]'
+      - name: Prepare exact IAM and Platform adapter artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JUNTAI_UPSTREAM_AUDIT_TOKEN: ${{ secrets.JUNTAI_UPSTREAM_AUDIT_TOKEN }}
+        run: sh scripts/prepare-external-dependencies.sh
+      - run: python -m pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest -q
@@ -43,6 +50,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-contexts: |
+            adapter-artifacts=.platform-adapters
+            iam-artifacts=.iam-artifacts
           push: true
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
@@ -52,7 +62,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=1.2.0
+            org.opencontainers.image.version=1.3.0
       - uses: actions/attest-build-provenance@v3
         with:
           subject-name: ghcr.io/zephytiju/juntai-synthetic-data-generation
@@ -65,6 +75,8 @@ jobs:
         run: |
           printf '%s\n' "image=ghcr.io/zephytiju/juntai-synthetic-data-generation@${IMAGE_DIGEST}" > dist/publication-evidence.txt
           printf '%s\n' "source=${SOURCE_COMMIT}" >> dist/publication-evidence.txt
+          sha256sum .platform-adapters/*.whl .platform-adapters/manifest.json >> dist/publication-evidence.txt
+          sha256sum .iam-artifacts/*.whl >> dist/publication-evidence.txt
           shasum -a 256 openapi/synthetic-data-generation.v1.json >> dist/publication-evidence.txt
           shasum -a 256 fixtures/* >> dist/publication-evidence.txt
       - uses: actions/upload-artifact@v5
@@ -76,6 +88,7 @@ jobs:
             fixtures/
             migrations/0001_jobs.sql
             migrations/0002_worker_protocol.sql
+            migrations/0003_transport_relay.sql
             migrations/manifest.v1.json
             contracts/worker-protocol/
             openapi/synthetic-data-generation.v1.json
@@ -83,3 +96,14 @@ jobs:
             documentation/contracts/
           if-no-files-found: error
           retention-days: 90
+
+  licensed-acceptance:
+    needs: publish
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/acceptance.yml
+    with:
+      source_revision: ${{ github.sha }}
+      image_digest: ${{ needs.publish.outputs.image_digest }}
+    secrets: inherit

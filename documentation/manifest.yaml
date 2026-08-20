@@ -2,17 +2,17 @@ apiVersion: capability.juntai.io/v1
 kind: AgentCapabilityBundle
 metadata:
   bundleId: synthetic-data-generation.service
-  version: 1.2.0
+  version: 1.3.0
   ownerKey: synthetic-data-generation
-  producerBuildId: a7511342311e84baf9f65045b8c9e72d4b3f23bd
+  producerBuildId: 5e0a11759457b76f4ed8e232128921a78c710806
 contracts:
   openapi:
     path: contracts/openapi.json
-    digest: sha256:26200a846179369af5c7f86e248f8eb1fa8085d62ddde994812ba348e68c93a8
+    digest: sha256:ae36c89103a4cf341111c2001ab35ae76f06335d9d5168bdd29d637c4837ee2b
   mcp:
     path: contracts/mcp-descriptor.json
-    digest: sha256:ca13c264d709c36382c02f9c120152b2c45765ae559d8a71529bdc1b60c89d21
-    descriptorDigest: sha256:ca13c264d709c36382c02f9c120152b2c45765ae559d8a71529bdc1b60c89d21
+    digest: sha256:a6a1462a13b2aaade505120cb6e661613d00e0e067c04df099120c2044f11d94
+    descriptorDigest: sha256:a6a1462a13b2aaade505120cb6e661613d00e0e067c04df099120c2044f11d94
 sources:
   root: .
   units:
@@ -111,6 +111,18 @@ sources:
       mcp:
         resourceId: synthetic-data.reference.worker-protocol
         mimeType: text/markdown
+    - unitId: synthetic-data.reference.transport-relay
+      kind: reference
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Service-owned transport relay
+      sourcePath: reference/transport-relay.md
+      parentUnitId: synthetic-data.overview
+      order: 66
+      lifecycle: release
+      mcp:
+        resourceId: synthetic-data.reference.transport-relay
+        mimeType: text/markdown
     - unitId: synthetic-data.safety.authorization
       kind: safety
       audiences: [human, agent, developer, operator]
@@ -189,20 +201,20 @@ publication:
   routeKey: platform.documentation
 provenance:
   sourceRepository: https://github.com/zephytiju/JuntaiSyntheticDataGeneration
-  sourceCommit: a7511342311e84baf9f65045b8c9e72d4b3f23bd
+  sourceCommit: 5e0a11759457b76f4ed8e232128921a78c710806
   packagerVersion: 1.0.0
   rendererVersions:
     human: 1.0.0
     mcp: 1.0.0
-  builtAt: "2026-08-19T09:43:02Z"
+  builtAt: "2026-08-20T21:39:03Z"
   approvalEvidenceRef:
     schemaVersion: "1"
-    evidenceId: feishu-task-4e299c00-6c7e-49fe-b40f-cdc4f1623f54
+    evidenceId: feishu-task-6b177928-e92f-4e11-ac7d-965b042eafbd
     ownerDomain: data-intel-platform
     evidenceKind: release-approval
     target:
       kind: resource
-      resourceId: feishu-task:4e299c00-6c7e-49fe-b40f-cdc4f1623f54
+      resourceId: feishu-task:6b177928-e92f-4e11-ac7d-965b042eafbd
     read:
       protocol: openapi
       serviceId: feishu-task-v2
@@ -211,11 +223,11 @@ provenance:
     selectors:
       - selectorId: taskGuid
         valueType: string
-        value: 4e299c00-6c7e-49fe-b40f-cdc4f1623f54
+        value: 6b177928-e92f-4e11-ac7d-965b042eafbd
       - selectorId: documentedSourceCommit
         valueType: string
-        value: a7511342311e84baf9f65045b8c9e72d4b3f23bd
-    observedAt: "2026-08-19T09:43:02Z"
+        value: 5e0a11759457b76f4ed8e232128921a78c710806
+    observedAt: "2026-08-20T21:39:03Z"
     access:
       authorizationPolicyId: data-intel-platform.documentation-release-read
       delegatedCallerRequired: true

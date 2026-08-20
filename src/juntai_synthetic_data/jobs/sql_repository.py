@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import Callable
 from contextlib import closing
+from datetime import datetime, timedelta
 from typing import Any
 
 from juntai_synthetic_data.contracts.models import CreateJobRequest
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
+from juntai_synthetic_data.relay.models import (
+    DeadLetterRecord,
+    OutboxLease,
+    dead_letter_record_digest,
+)
 
 from .models import Job, JobState, Transition
 
@@ -282,6 +289,18 @@ class SqlJobRepository:
             row = cursor.fetchone()
             return str(row[0]).strip() if row else None
 
+    def worker_attempt_exists(self, tenant_id: str, job_id: str, attempt_id: str) -> bool:
+        with closing(self._connect()) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1
+                  FROM juntai_synthetic_data.job_attempts
+                 WHERE tenant_id = %s AND job_id = %s AND attempt_id = %s
+                """,
+                (tenant_id, job_id, attempt_id),
+            )
+            return cursor.fetchone() is not None
+
     def commit_worker_event(
         self, job: Job, *, expected_version: int, event: Any, disposition: str
     ) -> Job:
@@ -323,22 +342,23 @@ class SqlJobRepository:
                 return job
             self._save_cursor(cursor, job, expected_version=expected_version)
             self._insert_transitions(cursor, job)
-            cursor.execute(
-                """
-                UPDATE juntai_synthetic_data.job_attempts
-                   SET status = %s, last_event_sequence = GREATEST(last_event_sequence, %s),
-                       execution_lease_id = %s, updated_at = CURRENT_TIMESTAMP
-                 WHERE tenant_id = %s AND job_id = %s AND attempt_id = %s
-                """,
-                (
-                    event.outcome or event.stage,
-                    event.sequence,
-                    event.execution_lease_id,
-                    event.tenant_id,
-                    event.job_id,
-                    event.attempt_id,
-                ),
-            )
+            if disposition == "COMMITTED":
+                cursor.execute(
+                    """
+                    UPDATE juntai_synthetic_data.job_attempts
+                       SET status = %s, last_event_sequence = GREATEST(last_event_sequence, %s),
+                           execution_lease_id = %s, updated_at = CURRENT_TIMESTAMP
+                     WHERE tenant_id = %s AND job_id = %s AND attempt_id = %s
+                    """,
+                    (
+                        event.outcome or event.stage,
+                        event.sequence,
+                        event.execution_lease_id,
+                        event.tenant_id,
+                        event.job_id,
+                        event.attempt_id,
+                    ),
+                )
         return job
 
     def list_runnable(self, *, limit: int = 100) -> tuple[Job, ...]:
@@ -352,6 +372,239 @@ class SqlJobRepository:
             return tuple(
                 self._job(row, self._transition_rows(cursor, row[1], row[0])) for row in rows
             )
+
+    def lease_outbox(
+        self,
+        *,
+        relay_id: str,
+        limit: int,
+        now: datetime,
+        lease_seconds: int,
+    ) -> tuple[OutboxLease, ...]:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                """
+                SELECT tenant_id, job_id, attempt_id, channel, message_id,
+                       content_digest, canonical_bytes, sequence, publish_attempts
+                  FROM juntai_synthetic_data.worker_outbox
+                 WHERE published_at IS NULL
+                   AND next_attempt_at <= %s
+                   AND (lease_expires_at IS NULL OR lease_expires_at <= %s)
+                 ORDER BY next_attempt_at, created_at, message_id
+                 LIMIT %s
+                 FOR UPDATE SKIP LOCKED
+                """,
+                (now, now, limit),
+            )
+            rows = cursor.fetchall()
+            leased: list[OutboxLease] = []
+            for row in rows:
+                token = uuid.uuid4().hex
+                expires_at = now + timedelta(seconds=lease_seconds)
+                cursor.execute(
+                    """
+                    UPDATE juntai_synthetic_data.worker_outbox
+                       SET lease_owner = %s, lease_token = %s, lease_expires_at = %s,
+                           publish_attempts = publish_attempts + 1
+                     WHERE message_id = %s AND published_at IS NULL
+                    """,
+                    (relay_id, token, expires_at, row[4]),
+                )
+                leased.append(
+                    OutboxLease(
+                        tenant_id=row[0],
+                        job_id=row[1],
+                        attempt_id=row[2],
+                        channel=row[3],
+                        message_id=row[4],
+                        content_digest=str(row[5]).strip(),
+                        canonical_bytes=bytes(row[6]),
+                        sequence=row[7],
+                        lease_token=token,
+                        lease_expires_at=expires_at,
+                        publish_attempts=row[8] + 1,
+                    )
+                )
+            return tuple(leased)
+
+    def renew_outbox_lease(
+        self,
+        message_id: str,
+        lease_token: str,
+        *,
+        now: datetime,
+        lease_seconds: int,
+    ) -> bool:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                """
+                UPDATE juntai_synthetic_data.worker_outbox
+                   SET lease_expires_at = %s
+                 WHERE message_id = %s AND lease_token = %s
+                   AND published_at IS NULL AND lease_expires_at > %s
+                """,
+                (now + timedelta(seconds=lease_seconds), message_id, lease_token, now),
+            )
+            return cursor.rowcount == 1
+
+    def mark_outbox_published(
+        self,
+        message_id: str,
+        lease_token: str,
+        *,
+        publication_id: str,
+        published_at: datetime,
+    ) -> bool:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                """
+                UPDATE juntai_synthetic_data.worker_outbox
+                   SET published_at = %s, platform_publication_id = %s,
+                       lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                       last_error_code = NULL, updated_at = %s
+                 WHERE message_id = %s AND lease_token = %s AND published_at IS NULL
+                """,
+                (published_at, publication_id, published_at, message_id, lease_token),
+            )
+            if cursor.rowcount == 1:
+                return True
+            cursor.execute(
+                """
+                SELECT platform_publication_id
+                  FROM juntai_synthetic_data.worker_outbox
+                 WHERE message_id = %s AND published_at IS NOT NULL
+                """,
+                (message_id,),
+            )
+            row = cursor.fetchone()
+            return bool(row and row[0] == publication_id)
+
+    def release_outbox_lease(
+        self,
+        message_id: str,
+        lease_token: str,
+        *,
+        next_attempt_at: datetime,
+        error_code: str,
+    ) -> bool:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                """
+                UPDATE juntai_synthetic_data.worker_outbox
+                   SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                       next_attempt_at = %s, last_error_code = %s,
+                       last_error_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                 WHERE message_id = %s AND lease_token = %s AND published_at IS NULL
+                """,
+                (next_attempt_at, error_code[:64], message_id, lease_token),
+            )
+            return cursor.rowcount == 1
+
+    def dead_letter_digest(self, dead_letter_id: str) -> str | None:
+        with closing(self._connect()) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT record_digest FROM juntai_synthetic_data.worker_dead_letter_inbox "
+                "WHERE dead_letter_id = %s",
+                (dead_letter_id,),
+            )
+            row = cursor.fetchone()
+            return str(row[0]).strip() if row else None
+
+    def commit_dead_letter(
+        self,
+        job: Job,
+        *,
+        expected_version: int,
+        record: DeadLetterRecord,
+        disposition: str,
+    ) -> Job:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            producer_namespace = (
+                record.authenticated_producer.namespace
+                if record.authenticated_producer is not None
+                else None
+            )
+            producer_service_account = (
+                record.authenticated_producer.service_account
+                if record.authenticated_producer is not None
+                else None
+            )
+            cursor.execute(
+                """
+                INSERT INTO juntai_synthetic_data.worker_dead_letter_inbox (
+                    tenant_id, job_id, attempt_id, dead_letter_id, original_channel,
+                    message_id, content_digest, original_content_digest, record_digest,
+                    canonical_bytes,
+                    delivery_count,
+                    producer_namespace, producer_service_account, terminal_reason_code,
+                    ledger_evidence_id, event_id, disposition
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (dead_letter_id) DO NOTHING
+                """,
+                (
+                    record.tenant_id,
+                    record.job_id,
+                    record.attempt_id,
+                    record.dead_letter_id,
+                    record.original_channel,
+                    record.message_id,
+                    record.content_digest,
+                    record.original_content_digest,
+                    dead_letter_record_digest(record),
+                    record.canonical_bytes,
+                    record.delivery_count,
+                    producer_namespace,
+                    producer_service_account,
+                    record.terminal_reason_code,
+                    record.ledger_evidence_id,
+                    record.event_id,
+                    disposition,
+                ),
+            )
+            if cursor.rowcount != 1:
+                cursor.execute(
+                    "SELECT record_digest FROM juntai_synthetic_data.worker_dead_letter_inbox "
+                    "WHERE dead_letter_id = %s",
+                    (record.dead_letter_id,),
+                )
+                prior = str(cursor.fetchone()[0]).strip()
+                if prior != dead_letter_record_digest(record):
+                    raise SyntheticDataError(
+                        ErrorCode.CONCURRENCY_CONFLICT, "dead-letter identity digest conflict"
+                    )
+                return job
+            if job.version != expected_version:
+                self._save_cursor(cursor, job, expected_version=expected_version)
+                self._insert_transitions(cursor, job)
+            cursor.execute(
+                """
+                UPDATE juntai_synthetic_data.job_attempts
+                   SET status = %s, updated_at = CURRENT_TIMESTAMP
+                 WHERE tenant_id = %s AND job_id = %s AND attempt_id = %s
+                """,
+                (disposition, record.tenant_id, record.job_id, record.attempt_id),
+            )
+        return job
 
     @staticmethod
     def _insert_transitions(cursor: Any, job: Job) -> None:

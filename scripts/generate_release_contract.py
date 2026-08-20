@@ -16,7 +16,7 @@ from juntai_synthetic_data.service import SyntheticDataService
 def main() -> None:
     commit = os.environ["SOURCE_COMMIT"]
     identity = ServiceArtifactIdentity(
-        service="synthetic-data-generation", version="1.2.0", source_commit=commit
+        service="synthetic-data-generation", version="1.3.0", source_commit=commit
     )
     service = cast(SyntheticDataService, object())
     bundle = OpenAPIArtifactGenerator(fuse_api_version="2.0.0").generate(

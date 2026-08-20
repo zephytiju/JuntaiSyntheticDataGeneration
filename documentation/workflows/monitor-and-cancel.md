@@ -7,7 +7,7 @@ The normal sequence is `ACCEPTED`, `POLICY_CHECK`, `QUEUED`, `RUNNING`, `VALIDAT
 To cancel, obtain a correct-audience bearer token and authorization for action `cancel` on
 `synthetic-data/jobs/{job_id}` and call `POST /v1/jobs/{job_id}:cancel`. Cancellation is idempotent.
 The API increments a monotonic cancel sequence and atomically records the control outbox. The
-executor forwards the highest sequence over the Unix socket, allows the specified grace interval,
+executor forwards the highest sequence over the authenticated fenced stream, allows the specified grace interval,
 then terminates the worker if necessary. A success arriving after cancellation committed is not
 associated with the job. Cancellation cannot delete or mutate an Artifact whose publication already
 committed.

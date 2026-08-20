@@ -14,7 +14,6 @@ from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.execution import WorkerEngine
 from juntai_synthetic_data.worker_protocol import (
     PROTOCOL_VERSION,
-    SOCKET_PATH,
     CancelEnvelope,
     DispatchEnvelope,
     ProtocolError,
@@ -25,10 +24,25 @@ from juntai_synthetic_data.worker_protocol import (
     write_frame,
 )
 
-PROTOCOL_ENV = "JUNTAI_SYNTHETIC_WORKER_PROTOCOL"
-SOCKET_ENV = "JUNTAI_SYNTHETIC_WORKER_SOCKET"
+_LEGACY_PROTOCOL_ENV = "JUNTAI_SYNTHETIC_WORKER_PROTOCOL"
+_LEGACY_SOCKET_ENV = "JUNTAI_SYNTHETIC_WORKER_SOCKET"
+_ALLOWED_SWP_ENVIRONMENT = frozenset(
+    {
+        "JUNTAI_SWP_TRANSPORT_FACTORY",
+        "JUNTAI_SWP_EXECUTOR_ADDRESS",
+        "JUNTAI_SWP_EXECUTOR_CA_FILE",
+        "JUNTAI_SWP_WORKLOAD_TOKEN_FILE",
+        "JUNTAI_SWP_CLAIM_ID",
+        "JUNTAI_SWP_CLAIM_GENERATION",
+        "JUNTAI_SWP_POD_UID",
+        "JUNTAI_SWP_CONTRACT_MANIFEST_FILE",
+        "JUNTAI_SWP_CONTRACT_MANIFEST_SHA256",
+    }
+)
 _FORBIDDEN_EXACT = frozenset(
     {
+        _LEGACY_PROTOCOL_ENV,
+        _LEGACY_SOCKET_ENV,
         "JUNTAI_JOB_DATABASE_DSN",
         "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE",
         "KUBERNETES_API_SERVER",
@@ -45,6 +59,7 @@ _FORBIDDEN_MOUNT_MARKERS = (
     "kes-dsn",
     "kingbase",
     "queue-token",
+    "juntai-worker/swp-v1.sock",
 )
 
 
@@ -54,15 +69,12 @@ def validate_worker_isolation(
     mountinfo: str | None = None,
 ) -> None:
     values = dict(os.environ if environ is None else environ)
-    if values.get(PROTOCOL_ENV) != PROTOCOL_VERSION:
-        raise RuntimeError(f"{PROTOCOL_ENV} must be {PROTOCOL_VERSION}")
-    if values.get(SOCKET_ENV, SOCKET_PATH) != SOCKET_PATH:
-        raise RuntimeError(f"{SOCKET_ENV} must be {SOCKET_PATH}")
     forbidden = sorted(
         name
         for name in values
         if name in _FORBIDDEN_EXACT
         or name.startswith("KUBERNETES_")
+        or (name.startswith("JUNTAI_SWP_") and name not in _ALLOWED_SWP_ENVIRONMENT)
         or any(marker in name.upper() for marker in _FORBIDDEN_MARKERS)
     )
     if forbidden:
@@ -95,15 +107,6 @@ class SocketWorker:
     @staticmethod
     def _now() -> datetime:
         return datetime.now(UTC)
-
-    def run(self, *, socket_path: str = SOCKET_PATH) -> None:
-        validate_worker_isolation()
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-            stream.connect(socket_path)
-            first = read_frame(stream)
-            if not isinstance(first, DispatchEnvelope):
-                raise ProtocolError("ENVELOPE_INVALID", "first SWP frame must be dispatch")
-            self.process(stream, first)
 
     def process(self, stream: socket.socket, dispatch: DispatchEnvelope) -> None:
         dispatch.verify()

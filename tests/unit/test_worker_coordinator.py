@@ -232,3 +232,67 @@ def test_terminal_input_image_and_capability_integrity_fail_closed() -> None:
     ).signed()
     with pytest.raises(SyntheticDataError, match="lacks required"):
         service.accept_worker_event(missing_capability, authenticated_producer=EXECUTOR)
+
+
+def test_authenticated_stale_event_is_durably_inboxed_without_mutating_terminal_job() -> None:
+    service, repository, status, dispatch = queued()
+    service.accept_worker_event(
+        event(
+            dispatch,
+            event_id="event-before-terminal-started",
+            event_type="STARTED",
+            stage="RUNNING",
+            sequence=0,
+        ),
+        authenticated_producer=EXECUTOR,
+    )
+    service.accept_worker_event(
+        event(
+            dispatch,
+            event_id="event-before-terminal-publishing",
+            event_type="STAGE",
+            stage="PUBLISHING",
+            sequence=1,
+        ),
+        authenticated_producer=EXECUTOR,
+    )
+    terminal = event(
+        dispatch,
+        event_id="event-first-terminal",
+        event_type="TERMINAL",
+        stage="PUBLISHING",
+        sequence=2,
+        outcome="SUCCEEDED",
+    )
+    service.accept_worker_event(terminal, authenticated_producer=EXECUTOR)
+    stale = event(
+        dispatch,
+        event_id="event-after-terminal",
+        event_type="STARTED",
+        stage="RUNNING",
+        sequence=3,
+    )
+    assert service.accept_worker_event(stale, authenticated_producer=EXECUTOR) == "ATTEMPT_STALE"
+    assert repository.worker_event_digest(stale.event_id) == stale.content_digest
+    assert service.get_job("tenant-a", status.job_id).state is JobState.SUCCEEDED
+    assert service.accept_worker_event(stale, authenticated_producer=EXECUTOR) == (
+        "RESULT_DUPLICATE"
+    )
+
+
+def test_unknown_attempt_is_rejected_instead_of_acknowledged_without_inbox_truth() -> None:
+    service, repository, _, dispatch = queued()
+    unknown = (
+        event(
+            dispatch,
+            event_id="event-unknown-attempt",
+            event_type="STARTED",
+            stage="RUNNING",
+            sequence=0,
+        )
+        .model_copy(update={"attempt_id": "attempt-unknown", "content_digest": None})
+        .signed()
+    )
+    with pytest.raises(SyntheticDataError, match="unknown SWP attempt"):
+        service.accept_worker_event(unknown, authenticated_producer=EXECUTOR)
+    assert repository.worker_event_digest(unknown.event_id) is None

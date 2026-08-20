@@ -52,6 +52,9 @@ def test_repository_contains_no_service_local_iac() -> None:
 
 
 def test_worker_base_image_is_digest_pinned() -> None:
-    first_line = (ROOT / "Dockerfile").read_text().splitlines()[0]
-    assert first_line.startswith("FROM python:3.13-slim@sha256:")
-    assert len(first_line.rsplit("sha256:", 1)[1]) == 64
+    lines = (ROOT / "Dockerfile").read_text().splitlines()
+    runtime_bases = [line for line in lines if line.startswith("FROM python:3.13-slim@sha256:")]
+    assert len(runtime_bases) == 1
+    assert len(runtime_bases[0].rsplit("sha256:", 1)[1]) == 64
+    assert "FROM adapter-artifacts AS adapter-artifacts" in lines
+    assert "FROM iam-artifacts AS iam-artifacts" in lines

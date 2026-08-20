@@ -1,8 +1,8 @@
 # Exact HTTP API and lifecycle
 
-This bundle binds the exact 1.2.0 OpenAPI digest
-`sha256:26200a846179369af5c7f86e248f8eb1fa8085d62ddde994812ba348e68c93a8`
-copied from reviewed source `a7511342311e84baf9f65045b8c9e72d4b3f23bd`.
+This bundle binds the exact generated 1.3.0 OpenAPI and its reviewed Synthetic source commit. The
+immutable digest and commit are recorded in `documentation/manifest.yaml`, the capability lock,
+publication result, checksums, SBOM, and provenance.
 
 | Method and path | Operation ID | Purpose |
 | --- | --- | --- |
