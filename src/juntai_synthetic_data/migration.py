@@ -248,8 +248,11 @@ def _baseline_state(cursor: Any) -> str:
     }
     for table_name, column_name, data_type, maximum_length, nullable in cursor.fetchall():
         actual_columns[table_name][column_name] = (data_type, maximum_length, nullable)
-    if actual_columns != _EXPECTED_COLUMNS:
-        return "partial"
+    for table_name, expected in _EXPECTED_COLUMNS.items():
+        if any(
+            actual_columns[table_name].get(column) != shape for column, shape in expected.items()
+        ):
+            return "partial"
     cursor.execute(
         """
         SELECT c.relname, c.relrowsecurity
@@ -268,10 +271,10 @@ def _baseline_state(cursor: Any) -> str:
          WHERE schemaname = 'juntai_synthetic_data'
         """
     )
-    if set(cursor.fetchall()) != {
+    if not {
         ("jobs", "jobs_tenant_isolation"),
         ("job_transitions", "transitions_tenant_isolation"),
-    }:
+    }.issubset(set(cursor.fetchall())):
         return "partial"
     cursor.execute(
         """
@@ -288,6 +291,67 @@ def _baseline_state(cursor: Any) -> str:
     for required in ("jobs_runnable_idx", "state", "created_at", "job_id", "where"):
         if required not in index_definition:
             return "partial"
+    return "complete"
+
+
+_WORKER_TABLES = {
+    "job_attempts",
+    "worker_outbox",
+    "worker_result_inbox",
+    "worker_cleanup_evidence",
+}
+_WORKER_POLICIES = {
+    ("job_attempts", "attempts_tenant_isolation"),
+    ("worker_outbox", "worker_outbox_tenant_isolation"),
+    ("worker_result_inbox", "worker_inbox_tenant_isolation"),
+    ("worker_cleanup_evidence", "cleanup_evidence_tenant_isolation"),
+}
+
+
+def _worker_protocol_state(cursor: Any) -> str:
+    existing = {
+        table
+        for table in _WORKER_TABLES
+        if _relation_exists(cursor, f"juntai_synthetic_data.{table}")
+    }
+    if not existing:
+        return "absent"
+    if existing != _WORKER_TABLES:
+        return "partial"
+    cursor.execute(
+        """
+        SELECT c.relname, c.relrowsecurity
+          FROM pg_class AS c
+          JOIN pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'juntai_synthetic_data'
+           AND c.relname IN (
+               'job_attempts', 'worker_outbox',
+               'worker_result_inbox', 'worker_cleanup_evidence'
+           )
+        """
+    )
+    if {name for name, enabled in cursor.fetchall() if enabled} != _WORKER_TABLES:
+        return "partial"
+    cursor.execute(
+        "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'juntai_synthetic_data'"
+    )
+    if not _WORKER_POLICIES.issubset(set(cursor.fetchall())):
+        return "partial"
+    cursor.execute(
+        """
+        SELECT column_name
+          FROM information_schema.columns
+         WHERE table_schema = 'juntai_synthetic_data'
+           AND table_name = 'jobs'
+           AND column_name IN ('cancel_sequence', 'active_attempt_id', 'active_attempt_number')
+        """
+    )
+    if {row[0] for row in cursor.fetchall()} != {
+        "cancel_sequence",
+        "active_attempt_id",
+        "active_attempt_number",
+    }:
+        return "partial"
     return "complete"
 
 
@@ -368,6 +432,8 @@ def apply_migrations(
                 )
             pending = tuple(item for item in ordered if item.migration_id not in ledger)
             if check:
+                if not pending and _worker_protocol_state(cursor) != "complete":
+                    raise MigrationSafetyError("SWP/v1 schema is incomplete")
                 status = "pending" if pending else "current"
                 return MigrationResult(
                     status=status,
@@ -402,6 +468,10 @@ def apply_migrations(
                 baseline_state = "complete"
             if _baseline_state(cursor) != "complete":
                 raise MigrationSafetyError("post-migration schema verification failed")
+            if any(item.migration_id == "0002_worker_protocol" for item in ordered) and (
+                _worker_protocol_state(cursor) != "complete"
+            ):
+                raise MigrationSafetyError("post-migration SWP/v1 schema verification failed")
             return MigrationResult(
                 status="applied" if applied or adopted else "current",
                 applied=tuple(applied),

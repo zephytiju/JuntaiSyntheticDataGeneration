@@ -1,8 +1,10 @@
 # Synthetic job-metadata KES migrations
 
 This repository and its released wheel/image exclusively own the
-`juntai_synthetic_data` KingbaseES schema. The schema contains bounded asynchronous job metadata
-and state transitions. It does not contain generated datasets, product-domain tables, target KES
+`juntai_synthetic_data` KingbaseES schema. The schema contains bounded asynchronous job metadata,
+state transitions, SWP attempts, canonical dispatch/control outbox records, idempotent result
+inbox records, and stale-output cleanup evidence. It does not contain generated datasets,
+product-domain tables, target KES
 data, deployment IaC, or Documentation Capability data.
 
 The migration is an explicit one-shot operation. API and worker startup never applies migrations.
@@ -24,7 +26,8 @@ checksums, source revision, service version, and image digest in
 
 Use `juntai-synthetic-data migrate --check` for a non-mutating compatibility check. A released
 1.0.0 schema with the exact expected tables, columns, RLS state, and policies is adopted into the
-ledger without re-running SQL. Empty-database application, baseline adoption, and all future
+ledger without re-running SQL. Release 1.2.0 then applies `0002_worker_protocol` after the released
+1.1.0 `0001_jobs` ledger baseline. Empty-database application, baseline adoption, and all future
 migrations run transactionally. A failed migration rolls back the entire invocation. Concurrent
 runs serialize on the advisory lock; repeat execution is idempotent.
 
@@ -42,3 +45,10 @@ digest-pinned V009R001C010 image. GitHub-hosted runners cannot acquire that lice
 immutable service release therefore accepts only a complete matrix result embedded in its annotated
 tag, verifies it against the already-published exact source image digest, and publishes the result
 beside the migration manifest, checksums, SBOM, provenance, and GitHub attestations.
+
+The matrix covers empty/repeat/concurrent execution, whole-invocation rollback on a forced failure,
+upgrade from the exact 1.1.0 ledger, tenant RLS across every SWP table, atomic API outbox and result
+replay, API/worker startup after migration, database restart, and a separate internal worker network
+that cannot resolve or connect to the KES container. The harness uses bounded task-specific
+disposable container, network, volume, and owner-only secret-file names, clears any stale prior run
+before startup, and removes them through an exit trap.

@@ -37,6 +37,9 @@ class SqlJobRepository:
             failure,
             result,
             cancellation_requested,
+            cancel_sequence,
+            active_attempt_id,
+            active_attempt_number,
         ) = row
         return Job(
             job_id=job_id,
@@ -55,6 +58,9 @@ class SqlJobRepository:
             failure=failure,
             result=result,
             cancellation_requested=cancellation_requested,
+            cancel_sequence=cancel_sequence,
+            active_attempt_id=active_attempt_id,
+            active_attempt_number=active_attempt_number,
         )
 
     @staticmethod
@@ -62,7 +68,8 @@ class SqlJobRepository:
         return """
             SELECT job_id, tenant_id, idempotency_key, request_digest, request_json,
                    state, version, created_at, updated_at, quota_json, provider_id,
-                   worker_image_digest, failure_json, result_json, cancellation_requested
+                   worker_image_digest, failure_json, result_json, cancellation_requested,
+                   cancel_sequence, active_attempt_id, active_attempt_number
               FROM juntai_synthetic_data.jobs
         """
 
@@ -158,36 +165,180 @@ class SqlJobRepository:
             connection.transaction(),
             connection.cursor() as cursor,
         ):
+            self._save_cursor(cursor, job, expected_version=expected_version)
+            self._insert_transitions(cursor, job)
+        return job
+
+    @staticmethod
+    def _save_cursor(cursor: Any, job: Job, *, expected_version: int) -> None:
+        cursor.execute(
+            """
+            UPDATE juntai_synthetic_data.jobs
+               SET state = %s, version = %s, updated_at = %s, quota_json = %s::jsonb,
+                   provider_id = %s, worker_image_digest = %s, failure_json = %s::jsonb,
+                   result_json = %s::jsonb, cancellation_requested = %s,
+                   cancel_sequence = %s, active_attempt_id = %s, active_attempt_number = %s
+             WHERE tenant_id = %s AND job_id = %s AND version = %s
+            """,
+            (
+                job.state.value,
+                job.version,
+                job.updated_at,
+                json.dumps(job.quota),
+                job.provider_id,
+                job.worker_image_digest,
+                json.dumps(job.failure),
+                json.dumps(job.result, default=str),
+                job.cancellation_requested,
+                job.cancel_sequence,
+                job.active_attempt_id,
+                job.active_attempt_number,
+                job.tenant_id,
+                job.job_id,
+                expected_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise SyntheticDataError(
+                ErrorCode.CONCURRENCY_CONFLICT,
+                "job version changed during update",
+                retryable=True,
+            )
+
+    def save_with_dispatch(
+        self,
+        job: Job,
+        *,
+        expected_version: int,
+        input_artifact: Any,
+        outbox: Any,
+    ) -> Job:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            self._save_cursor(cursor, job, expected_version=expected_version)
+            self._insert_transitions(cursor, job)
             cursor.execute(
                 """
-                UPDATE juntai_synthetic_data.jobs
-                   SET state = %s, version = %s, updated_at = %s, quota_json = %s::jsonb,
-                       provider_id = %s, worker_image_digest = %s, failure_json = %s::jsonb,
-                       result_json = %s::jsonb, cancellation_requested = %s
-                 WHERE tenant_id = %s AND job_id = %s AND version = %s
+                INSERT INTO juntai_synthetic_data.job_attempts (
+                    tenant_id, job_id, attempt_id, attempt_number, input_artifact_json,
+                    worker_image_digest, protocol_version, status
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, 'QUEUED')
                 """,
                 (
-                    job.state.value,
-                    job.version,
-                    job.updated_at,
-                    json.dumps(job.quota),
-                    job.provider_id,
-                    job.worker_image_digest,
-                    json.dumps(job.failure),
-                    json.dumps(job.result, default=str),
-                    job.cancellation_requested,
                     job.tenant_id,
                     job.job_id,
-                    expected_version,
+                    outbox.attempt_id,
+                    job.active_attempt_number,
+                    json.dumps(input_artifact.model_dump(mode="json", by_alias=True)),
+                    job.worker_image_digest,
+                    "juntai.synthetic.worker/v1",
+                ),
+            )
+            self._insert_outbox(cursor, outbox)
+        return job
+
+    def save_with_control(self, job: Job, *, expected_version: int, outbox: Any) -> Job:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            self._save_cursor(cursor, job, expected_version=expected_version)
+            self._insert_transitions(cursor, job)
+            self._insert_outbox(cursor, outbox)
+        return job
+
+    @staticmethod
+    def _insert_outbox(cursor: Any, outbox: Any) -> None:
+        cursor.execute(
+            """
+            INSERT INTO juntai_synthetic_data.worker_outbox (
+                tenant_id, job_id, attempt_id, channel, message_id,
+                content_digest, canonical_bytes, sequence
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                outbox.tenant_id,
+                outbox.job_id,
+                outbox.attempt_id,
+                outbox.channel,
+                outbox.message_id,
+                outbox.content_digest,
+                outbox.canonical_bytes,
+                outbox.sequence,
+            ),
+        )
+
+    def worker_event_digest(self, event_id: str) -> str | None:
+        with closing(self._connect()) as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT content_digest FROM juntai_synthetic_data.worker_result_inbox "
+                "WHERE event_id = %s",
+                (event_id,),
+            )
+            row = cursor.fetchone()
+            return str(row[0]).strip() if row else None
+
+    def commit_worker_event(
+        self, job: Job, *, expected_version: int, event: Any, disposition: str
+    ) -> Job:
+        with (
+            closing(self._connect()) as connection,
+            connection.transaction(),
+            connection.cursor() as cursor,
+        ):
+            cursor.execute(
+                """
+                INSERT INTO juntai_synthetic_data.worker_result_inbox (
+                    tenant_id, job_id, attempt_id, event_id, content_digest,
+                    event_type, canonical_bytes, disposition
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO NOTHING
+                """,
+                (
+                    event.tenant_id,
+                    event.job_id,
+                    event.attempt_id,
+                    event.event_id,
+                    event.content_digest,
+                    event.event_type,
+                    event.canonical_bytes(),
+                    disposition,
                 ),
             )
             if cursor.rowcount != 1:
-                raise SyntheticDataError(
-                    ErrorCode.CONCURRENCY_CONFLICT,
-                    "job version changed during update",
-                    retryable=True,
+                cursor.execute(
+                    "SELECT content_digest FROM juntai_synthetic_data.worker_result_inbox "
+                    "WHERE event_id = %s",
+                    (event.event_id,),
                 )
+                prior = str(cursor.fetchone()[0]).strip()
+                if prior != event.content_digest:
+                    raise SyntheticDataError(
+                        ErrorCode.CONCURRENCY_CONFLICT, "worker event digest conflict"
+                    )
+                return job
+            self._save_cursor(cursor, job, expected_version=expected_version)
             self._insert_transitions(cursor, job)
+            cursor.execute(
+                """
+                UPDATE juntai_synthetic_data.job_attempts
+                   SET status = %s, last_event_sequence = GREATEST(last_event_sequence, %s),
+                       execution_lease_id = %s, updated_at = CURRENT_TIMESTAMP
+                 WHERE tenant_id = %s AND job_id = %s AND attempt_id = %s
+                """,
+                (
+                    event.outcome or event.stage,
+                    event.sequence,
+                    event.execution_lease_id,
+                    event.tenant_id,
+                    event.job_id,
+                    event.attempt_id,
+                ),
+            )
         return job
 
     def list_runnable(self, *, limit: int = 100) -> tuple[Job, ...]:

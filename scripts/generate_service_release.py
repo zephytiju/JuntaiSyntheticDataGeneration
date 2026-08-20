@@ -1,4 +1,4 @@
-"""Compose the exact immutable Synthetic 1.1.0 service and migration release assets."""
+"""Compose the exact immutable Synthetic 1.2.0 service and migration release assets."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).parents[1]
-VERSION = "1.1.0"
-RELEASE_TAG = "synthetic-data-v1.1.0"
+VERSION = "1.2.0"
+RELEASE_TAG = "synthetic-data-v1.2.0"
 KES_IMAGE = (
     "kingbase_v009r001c010b0004_single_x86:v1@"
     "sha256:0bce318e74adca7a3d619b55b336269017507fd679833b7ce5d8400289661724"
@@ -90,7 +90,7 @@ def _validate(args: argparse.Namespace, evidence: dict[str, Any]) -> None:
         raise SystemExit("real-KES evidence image differs from release image")
     if evidence.get("kingbaseImage") != KES_IMAGE:
         raise SystemExit("real-KES evidence used an unexpected KingbaseES image")
-    if evidence.get("migrationIds") != ["0001_jobs"]:
+    if evidence.get("migrationIds") != ["0001_jobs", "0002_worker_protocol"]:
         raise SystemExit("real-KES evidence used an unexpected migration set")
 
 
@@ -107,12 +107,23 @@ def main() -> int:
     sources = {
         wheel: wheel.name,
         ROOT / "migrations" / "0001_jobs.sql": "0001_jobs.sql",
+        ROOT / "migrations" / "0002_worker_protocol.sql": "0002_worker_protocol.sql",
         ROOT / "migrations" / "manifest.v1.json": "migration-set.v1.json",
         ROOT / "openapi" / "synthetic-data-generation.v1.json": (
             "synthetic-data-generation.openapi.v1.json"
         ),
         ROOT / "openapi" / "synthetic-data-generation.v1.sha256": (
             "synthetic-data-generation.openapi.v1.sha256"
+        ),
+        ROOT / "contracts" / "worker-protocol" / "swp.v1.schema.json": (
+            "synthetic-worker-protocol.v1.schema.json"
+        ),
+        ROOT / "contracts" / "worker-protocol" / "swp.v1.sha256": (
+            "synthetic-worker-protocol.v1.sha256"
+        ),
+        ROOT / "documentation" / "contracts" / "openapi.json": ("documentation.openapi.v1.json"),
+        ROOT / "documentation" / "contracts" / "mcp-descriptor.json": (
+            "documentation.mcp-descriptor.v1.json"
         ),
         ROOT / "MIGRATIONS.md": "MIGRATIONS.md",
         ROOT / "scripts" / "real_kes_acceptance.py": "real_kes_acceptance.py",
@@ -123,9 +134,10 @@ def main() -> int:
         shutil.copyfile(source, output / name)
 
     migration_set = json.loads((output / "migration-set.v1.json").read_text())
-    sql_digest = _digest(output / "0001_jobs.sql")
-    if migration_set["migrations"][0]["sha256"] != sql_digest:
-        raise SystemExit("released SQL does not match the migration-set checksum")
+    for migration in migration_set["migrations"]:
+        sql_digest = _digest(output / migration["path"])
+        if migration["sha256"] != sql_digest:
+            raise SystemExit(f"released SQL does not match checksum: {migration['id']}")
     openapi_digest = _digest(output / "synthetic-data-generation.openapi.v1.json")
     expected_openapi = (
         (output / "synthetic-data-generation.openapi.v1.sha256").read_text().split()[0]
@@ -176,6 +188,9 @@ def main() -> int:
         "image": image_reference,
         "imageSbom": "OCI BuildKit SBOM attached to the image index",
         "imageProvenance": "GitHub artifact attestation and OCI BuildKit provenance",
+        "workerProtocolSha256": _digest(output / "synthetic-worker-protocol.v1.schema.json"),
+        "documentationOpenapiSha256": _digest(output / "documentation.openapi.v1.json"),
+        "documentationMcpSha256": _digest(output / "documentation.mcp-descriptor.v1.json"),
         "migrationManifest": {
             "name": "migration-release-manifest.json",
             "sha256": _digest(output / "migration-release-manifest.json"),
@@ -189,11 +204,11 @@ def main() -> int:
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
-        "name": "juntai-synthetic-data-generation-1.1.0-release",
+        "name": "juntai-synthetic-data-generation-1.2.0-release",
         "documentNamespace": f"https://github.com/{args.repository}/actions/runs/{args.run_id}/sbom",
         "creationInfo": {
             "created": _created_at(),
-            "creators": ["Tool: generate_service_release.py-1.1.0"],
+            "creators": ["Tool: generate_service_release.py-1.2.0"],
         },
         "packages": [
             {

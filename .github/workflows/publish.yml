@@ -2,7 +2,8 @@ name: Publish immutable image and contracts
 
 on:
   push:
-    branches: [main]
+    branches: [main, "agent/synthetic-worker-isolation-v*"]
+    paths-ignore: ["release-evidence/**"]
 
 permissions:
   contents: read
@@ -21,8 +22,13 @@ jobs:
           cache: pip
       - run: python -m pip install -e '.[test]'
       - run: ruff check .
+      - run: ruff format --check .
       - run: pytest -q
+      - run: python scripts/generate_openapi.py
+      - run: python scripts/generate_worker_protocol.py
       - run: python scripts/generate_fixture.py
+      - run: python scripts/generate_documentation_contracts.py
+      - run: git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
       - name: Generate exact merged-commit OpenAPI artifact
         env:
           SOURCE_COMMIT: ${{ github.sha }}
@@ -46,7 +52,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=1.1.0
+            org.opencontainers.image.version=1.2.0
       - uses: actions/attest-build-provenance@v3
         with:
           subject-name: ghcr.io/zephytiju/juntai-synthetic-data-generation
@@ -69,8 +75,11 @@ jobs:
             dist/publication-evidence.txt
             fixtures/
             migrations/0001_jobs.sql
+            migrations/0002_worker_protocol.sql
             migrations/manifest.v1.json
+            contracts/worker-protocol/
             openapi/synthetic-data-generation.v1.json
             openapi/synthetic-data-generation.v1.sha256
+            documentation/contracts/
           if-no-files-found: error
           retention-days: 90

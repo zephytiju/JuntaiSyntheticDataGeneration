@@ -23,8 +23,11 @@ def test_manifest_is_ordered_and_binds_exact_source_checksum() -> None:
     migrations = load_migrations()
 
     assert document["schemaVersion"] == "juntai.synthetic-data.migration-set/v1"
-    assert document["service"]["version"] == "1.1.0"
-    assert [migration.migration_id for migration in migrations] == ["0001_jobs"]
+    assert document["service"]["version"] == "1.2.0"
+    assert [migration.migration_id for migration in migrations] == [
+        "0001_jobs",
+        "0002_worker_protocol",
+    ]
     assert migrations[0].checksum == hashlib.sha256(migrations[0].sql.encode()).hexdigest()
     assert migrations[0].checksum == (
         "af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822"
@@ -38,7 +41,7 @@ def test_binding_requires_exact_immutable_identifiers(monkeypatch: pytest.Monkey
 
     assert binding.source_revision == "a" * 40
     assert binding.image_digest == "sha256:" + "b" * 64
-    assert binding.service_version == "1.1.0"
+    assert binding.service_version == "1.2.0"
 
 
 @pytest.mark.parametrize(

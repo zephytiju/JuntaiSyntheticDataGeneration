@@ -62,42 +62,31 @@ def main() -> int | None:
     args = _parser().parse_args()
     if args.mode == "migrate":
         return _run_migration(args)
-    from juntai_synthetic_data.runtime import build_runtime_service
-
-    service = build_runtime_service()
     if args.mode == "serve":
         from juntai_synthetic_data.api import build_server
+        from juntai_synthetic_data.api.openapi import IAM_AUDIENCE
+        from juntai_synthetic_data.runtime import build_runtime_service
         from juntai_synthetic_data.runtime_auth import build_runtime_authorizer
 
+        service = build_runtime_service()
+        configured_audience = os.getenv("JUNTAI_IAM_AUDIENCE", IAM_AUDIENCE)
+        if configured_audience != IAM_AUDIENCE:
+            raise RuntimeError(f"JUNTAI_IAM_AUDIENCE must be exactly {IAM_AUDIENCE}")
         authorizer = build_runtime_authorizer(
             issuer=os.environ["JUNTAI_IAM_ISSUER"],
-            audiences=tuple(
-                item.strip()
-                for item in os.environ["JUNTAI_IAM_AUDIENCE"].split(",")
-                if item.strip()
-            ),
+            audiences=(IAM_AUDIENCE,),
             policy_snapshot_path=os.environ["JUNTAI_IAM_POLICY_SNAPSHOT"],
             discovery_url=os.getenv("JUNTAI_IAM_DISCOVERY_URL"),
         )
         server = build_server(service, authorizer=authorizer)
         asyncio.run(server.serve(host=os.getenv("HOST", "0.0.0.0")))
     else:
-        from juntai_synthetic_data.scheduling import JobScheduler
+        from juntai_synthetic_data.worker import SOCKET_ENV, SOCKET_PATH, validate_worker_isolation
 
-        scheduler = JobScheduler(service)
+        validate_worker_isolation()
+        from juntai_synthetic_data.worker_runtime import build_worker
 
-        async def run() -> None:
-            await scheduler.validate()
-            await scheduler.materialize()
-            await scheduler.start()
-            try:
-                await asyncio.Event().wait()
-            finally:
-                await scheduler.remove_readiness()
-                await scheduler.drain()
-                await scheduler.stop()
-
-        asyncio.run(run())
+        build_worker().run(socket_path=os.getenv(SOCKET_ENV, SOCKET_PATH))
 
 
 if __name__ == "__main__":

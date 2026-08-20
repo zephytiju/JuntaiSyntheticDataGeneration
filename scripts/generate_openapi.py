@@ -8,6 +8,7 @@ from typing import cast
 from juntai.sdk.fuse_api.adapters.http import HTTPAdapter
 
 from juntai_synthetic_data.api import build_job_group
+from juntai_synthetic_data.api.openapi import apply_bearer_security
 from juntai_synthetic_data.service import SyntheticDataService
 
 ROOT = Path(__file__).parents[1]
@@ -15,12 +16,13 @@ ROOT = Path(__file__).parents[1]
 
 def main() -> None:
     service = cast(SyntheticDataService, object())
-    app = HTTPAdapter(title="Juntai Synthetic Data Generation", version="1.1.0").build(
+    app = HTTPAdapter(title="Juntai Synthetic Data Generation", version="1.2.0").build(
         [build_job_group(service)], []
     )
+    document = apply_bearer_security(app.openapi())
     content = (
         json.dumps(
-            app.openapi(),
+            document,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,

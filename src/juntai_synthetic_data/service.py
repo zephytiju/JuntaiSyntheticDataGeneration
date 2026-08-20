@@ -19,6 +19,7 @@ from juntai_synthetic_data.contracts.models import (
 )
 from juntai_synthetic_data.dataset import BoundedDatasetSink
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
+from juntai_synthetic_data.execution.coordinator import WorkerCoordinator
 from juntai_synthetic_data.jobs import Job, JobRepository, JobState
 from juntai_synthetic_data.policy import DefaultPolicyEngine
 from juntai_synthetic_data.provenance import build_provenance
@@ -42,6 +43,7 @@ class SyntheticDataService:
         validator_sandbox: ValidatorSandbox | None = None,
         usage_reporter: UsageReporter | None = None,
         source_revision: str = "0" * 40,
+        coordinator: WorkerCoordinator | None = None,
     ) -> None:
         self.repository = repository
         self.providers = providers
@@ -51,6 +53,7 @@ class SyntheticDataService:
         self.validator_sandbox = validator_sandbox
         self.usage_reporter = usage_reporter
         self.source_revision = source_revision
+        self.coordinator = coordinator
 
     @staticmethod
     def _tenant(value: str) -> str:
@@ -92,6 +95,13 @@ class SyntheticDataService:
             job.provider_id = provider.manifest.provider_id
             job.worker_image_digest = provider.manifest.worker_image_digest
             job.transition(JobState.QUEUED)
+            if self.coordinator is not None:
+                self.coordinator.queue(
+                    job,
+                    expected_version=expected,
+                    provider_version=provider.manifest.version,
+                )
+                return self.status(job)
         except SyntheticDataError as error:
             job.fail(error)
         self.repository.save(job, expected_version=expected)
@@ -108,6 +118,9 @@ class SyntheticDataService:
         expected = job.version
         if not job.terminal and job.state is not JobState.PUBLISHING:
             job.request_cancellation()
+            if self.coordinator is not None:
+                self.coordinator.cancel(job, expected_version=expected)
+                return self.status(job)
             if job.state is JobState.CANCELLING and job.transitions[-2].from_state in {
                 JobState.ACCEPTED,
                 JobState.POLICY_CHECK,
@@ -117,6 +130,21 @@ class SyntheticDataService:
                 self._release(job)
             self.repository.save(job, expected_version=expected)
         return self.status(job)
+
+    def accept_worker_event(self, event, *, authenticated_producer) -> str:
+        if self.coordinator is None:
+            raise SyntheticDataError(
+                ErrorCode.DEPENDENCY_UNAVAILABLE,
+                "SWP coordinator is not configured",
+                retryable=True,
+            )
+        job = self.get_job(event.tenant_id, event.job_id)
+        disposition = self.coordinator.accept_event(
+            job, event, authenticated_producer=authenticated_producer
+        )
+        if job.terminal:
+            self._release(job)
+        return disposition
 
     def run_job(self, tenant_id: str, job_id: str) -> JobStatus:
         job = self.get_job(tenant_id, job_id)
