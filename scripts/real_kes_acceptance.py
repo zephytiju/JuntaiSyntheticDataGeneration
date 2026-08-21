@@ -5,17 +5,14 @@ import hashlib
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 import psycopg
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from juntai_synthetic_data.api import build_server
-from juntai_synthetic_data.contracts.models import CreateJobRequest
-from juntai_synthetic_data.execution import WorkerCoordinator
-from juntai_synthetic_data.jobs import SqlJobRepository
+from juntai_synthetic_data.contracts.models import CreateGenerationRequest
+from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.migration import (
     Migration,
     MigrationBinding,
@@ -24,26 +21,12 @@ from juntai_synthetic_data.migration import (
     load_migrations,
     read_dsn_file,
 )
+from juntai_synthetic_data.persistence import SqlGenerationRepository
 from juntai_synthetic_data.policy import DefaultPolicyEngine
 from juntai_synthetic_data.providers import DeterministicTabularProvider, ProviderRegistry
-from juntai_synthetic_data.publication import PublishedDataset
-from juntai_synthetic_data.quotas import InMemoryQuotaLedger, QuotaLimits
 from juntai_synthetic_data.service import SyntheticDataService
-from juntai_synthetic_data.worker import SocketWorker, validate_worker_isolation
-from juntai_synthetic_data.worker_protocol import (
-    EVIDENCE_MEDIA_TYPE,
-    INPUT_MEDIA_TYPE,
-    PROTOCOL_VERSION,
-    SOCKET_PATH,
-    DispatchEnvelope,
-    ExactArtifactReference,
-    ProgressBounds,
-    WorkerEventEnvelope,
-    WorkloadIdentity,
-    decode_envelope,
-)
 
-ROOT = Path(__file__).parents[1]
+RUNTIME_ROLE = "synthetic_runtime_acceptance"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -75,23 +58,19 @@ def _empty_repeat_and_check(dsn: str, binding: MigrationBinding) -> None:
     first = apply_migrations(dsn, binding)
     second = apply_migrations(dsn, binding)
     checked = apply_migrations(dsn, binding, check=True)
-    assert first.applied == ("0001_jobs", "0002_worker_protocol")
+    expected = tuple(item.migration_id for item in load_migrations())
+    assert first.applied == expected
     assert second.status == "current"
     assert checked.status == "current"
 
 
 def _concurrency(dsn: str, binding: MigrationBinding) -> None:
     _reset(dsn)
+    expected = tuple(item.migration_id for item in load_migrations())
     with ThreadPoolExecutor(max_workers=4) as executor:
         results = list(executor.map(lambda _: apply_migrations(dsn, binding), range(4)))
-    assert sum(result.applied == ("0001_jobs", "0002_worker_protocol") for result in results) == 1
+    assert sum(result.applied == expected for result in results) == 1
     assert sum(result.status == "current" for result in results) == 3
-    rows = _execute(
-        dsn,
-        "SELECT migration_id, count(*) FROM juntai_synthetic_data.schema_migrations "
-        "GROUP BY migration_id ORDER BY migration_id",
-    )
-    assert rows == [("0001_jobs", 1), ("0002_worker_protocol", 1)], rows
 
 
 def _partial_failure(dsn: str, binding: MigrationBinding) -> None:
@@ -112,313 +91,331 @@ def _partial_failure(dsn: str, binding: MigrationBinding) -> None:
         raise AssertionError("forced partial failure did not fail")
     assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.jobs')") == [(None,)]
     assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.must_rollback')") == [(None,)]
-    recovered = apply_migrations(dsn, binding)
-    assert recovered.applied == ("0001_jobs", "0002_worker_protocol")
+    assert apply_migrations(dsn, binding).applied == tuple(
+        item.migration_id for item in load_migrations()
+    )
 
 
 def _released_baseline_upgrade(dsn: str, binding: MigrationBinding) -> None:
     _reset(dsn)
-    baseline = load_migrations()[0]
+    historical = load_migrations()[:2]
     released = MigrationBinding(
-        source_revision="81c4b28336be46c57654d9de569ffefc803714f0",
-        image_digest="sha256:" + "1" * 64,
-        service_version="1.1.0",
+        source_revision="b67c6fe17e94f62856c421ebd1cddebcea2e5540",
+        image_digest="sha256:" + "8" * 64,
+        service_version="1.2.0",
     )
-    assert apply_migrations(dsn, released, migrations=(baseline,)).applied == ("0001_jobs",)
+    assert apply_migrations(dsn, released, migrations=historical).applied == (
+        "0001_jobs",
+        "0002_worker_protocol",
+    )
     result = apply_migrations(dsn, binding)
-    assert result.applied == ("0002_worker_protocol",)
-    rows = _execute(
-        dsn,
-        "SELECT migration_id, service_version, adopted_from_baseline "
-        "FROM juntai_synthetic_data.schema_migrations ORDER BY migration_id",
-    )
-    assert rows == [
-        ("0001_jobs", "1.1.0", False),
-        ("0002_worker_protocol", "1.2.0", False),
-    ]
+    assert result.applied == ("0003_synchronous_generations",)
+    assert _execute(dsn, "SELECT to_regclass('juntai_synthetic_data.jobs')") == [(None,)]
 
 
-def _tenant_isolation(dsn: str) -> None:
-    role = "synthetic_rls_acceptance"
-    with psycopg.connect(dsn) as connection, connection.cursor() as cursor:
-        cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,))
+def _runtime_dsn(admin_dsn: str) -> str:
+    settings = conninfo_to_dict(admin_dsn)
+    password = str(settings["password"])
+    with psycopg.connect(admin_dsn) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (RUNTIME_ROLE,))
         if cursor.fetchone() is None:
-            cursor.execute(f"CREATE ROLE {role} NOLOGIN")
-        cursor.execute(f"GRANT USAGE ON SCHEMA juntai_synthetic_data TO {role}")
-        cursor.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA juntai_synthetic_data TO {role}")
-        for tenant, job in (("tenant-a", "job_a"), ("tenant-b", "job_b")):
-            suffix = tenant[-1]
-            attempt = f"attempt-{suffix}"
             cursor.execute(
-                """
-                INSERT INTO juntai_synthetic_data.jobs (
-                    job_id, tenant_id, idempotency_key, request_digest, request_json,
-                    state, version, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, '{}'::jsonb, 'ACCEPTED', 1,
-                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                """,
-                (job, tenant, f"key-{tenant}", "sha256:" + "1" * 64),
+                sql.SQL("CREATE USER {} PASSWORD {}").format(
+                    sql.Identifier(RUNTIME_ROLE),
+                    sql.Literal(password),
+                )
             )
+        else:
             cursor.execute(
-                """
-                INSERT INTO juntai_synthetic_data.job_attempts (
-                    tenant_id, job_id, attempt_id, attempt_number, input_artifact_json,
-                    worker_image_digest, protocol_version, status
-                ) VALUES (%s, %s, %s, 1, '{}'::jsonb, %s,
-                          'juntai.synthetic.worker/v1', 'QUEUED')
-                """,
-                (tenant, job, attempt, "sha256:" + "2" * 64),
+                sql.SQL("ALTER USER {} PASSWORD {}").format(
+                    sql.Identifier(RUNTIME_ROLE),
+                    sql.Literal(password),
+                )
             )
-            cursor.execute(
-                """
-                INSERT INTO juntai_synthetic_data.worker_outbox (
-                    tenant_id, job_id, attempt_id, channel, message_id,
-                    content_digest, canonical_bytes, sequence
-                ) VALUES (%s, %s, %s, 'synthetic.worker.dispatch.v1', %s, %s, %s, 0)
-                """,
-                (tenant, job, attempt, f"message-{suffix}", "sha256:" + "3" * 64, b"{}"),
-            )
-            cursor.execute(
-                """
-                INSERT INTO juntai_synthetic_data.worker_result_inbox (
-                    tenant_id, job_id, attempt_id, event_id, content_digest,
-                    event_type, canonical_bytes, disposition
-                ) VALUES (%s, %s, %s, %s, %s, 'STARTED', %s, 'COMMITTED')
-                """,
-                (tenant, job, attempt, f"event-{suffix}", "sha256:" + "4" * 64, b"{}"),
-            )
-            cursor.execute(
-                """
-                INSERT INTO juntai_synthetic_data.worker_cleanup_evidence (
-                    tenant_id, job_id, attempt_id, evidence_id, reason_code, artifact_json
-                ) VALUES (%s, %s, %s, %s, 'ATTEMPT_STALE', '{}'::jsonb)
-                """,
-                (tenant, job, attempt, f"cleanup-{suffix}"),
-            )
-        cursor.execute(f"SET ROLE {role}")
-        cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-a', false)")
-        cursor.execute("SELECT tenant_id, job_id FROM juntai_synthetic_data.jobs ORDER BY job_id")
-        assert cursor.fetchall() == [("tenant-a", "job_a")]
-        for table in (
-            "job_attempts",
-            "worker_outbox",
-            "worker_result_inbox",
-            "worker_cleanup_evidence",
-        ):
-            cursor.execute(f"SELECT tenant_id FROM juntai_synthetic_data.{table}")
-            assert cursor.fetchall() == [("tenant-a",)]
-        cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-b', false)")
-        cursor.execute("SELECT tenant_id, job_id FROM juntai_synthetic_data.jobs ORDER BY job_id")
-        assert cursor.fetchall() == [("tenant-b", "job_b")]
-        for table in (
-            "job_attempts",
-            "worker_outbox",
-            "worker_result_inbox",
-            "worker_cleanup_evidence",
-        ):
-            cursor.execute(f"SELECT tenant_id FROM juntai_synthetic_data.{table}")
-            assert cursor.fetchall() == [("tenant-b",)]
-        cursor.execute("RESET ROLE")
+    settings["user"] = RUNTIME_ROLE
+    return make_conninfo(**settings)
 
 
-@dataclass
-class _Publisher:
-    def publish(self, **_: Any) -> PublishedDataset:
-        return PublishedDataset(
-            artifact_id="art_acceptance",
-            version_id="artv_acceptance_1",
-            digest="sha256:" + "2" * 64,
-            media_type="application/vnd.oci.image.manifest.v1+json",
+def _prepare_application_schema(admin_dsn: str) -> None:
+    with psycopg.connect(admin_dsn) as connection, connection.cursor() as cursor:
+        cursor.execute("DROP SCHEMA IF EXISTS lattice_preview CASCADE")
+        cursor.execute("DROP SCHEMA IF EXISTS axiom_preview CASCADE")
+        cursor.execute('DROP SCHEMA IF EXISTS "Caller Preview" CASCADE')
+        cursor.execute("CREATE SCHEMA axiom_preview")
+        cursor.execute("CREATE SCHEMA lattice_preview")
+        cursor.execute('CREATE SCHEMA "Caller Preview"')
+        cursor.execute(
+            """
+            CREATE TABLE axiom_preview.site (
+                tenant_id varchar(128) NOT NULL,
+                site_id varchar(64) NOT NULL UNIQUE,
+                display_name varchar(200) NOT NULL,
+                PRIMARY KEY (tenant_id, site_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE lattice_preview.asset (
+                tenant_id varchar(128) NOT NULL,
+                asset_id varchar(64) NOT NULL UNIQUE,
+                site_id varchar(64) NOT NULL,
+                reading double precision NOT NULL,
+                PRIMARY KEY (tenant_id, asset_id),
+                FOREIGN KEY (site_id) REFERENCES axiom_preview.site(site_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE "Caller Preview"."Quoted Table" (
+                "Tenant ID" varchar(128) NOT NULL,
+                "Row ID" varchar(64) NOT NULL,
+                PRIMARY KEY ("Tenant ID", "Row ID")
+            )
+            """
+        )
+        for table in ("axiom_preview.site", "lattice_preview.asset"):
+            cursor.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+            cursor.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        cursor.execute('ALTER TABLE "Caller Preview"."Quoted Table" ENABLE ROW LEVEL SECURITY')
+        cursor.execute('ALTER TABLE "Caller Preview"."Quoted Table" FORCE ROW LEVEL SECURITY')
+        cursor.execute(
+            "CREATE POLICY site_tenant ON axiom_preview.site "
+            "USING (tenant_id = current_setting('juntai.tenant_id', true)) "
+            "WITH CHECK (tenant_id = current_setting('juntai.tenant_id', true))"
+        )
+        cursor.execute(
+            "CREATE POLICY asset_tenant ON lattice_preview.asset "
+            "USING (tenant_id = current_setting('juntai.tenant_id', true)) "
+            "WITH CHECK (tenant_id = current_setting('juntai.tenant_id', true))"
+        )
+        cursor.execute(
+            'CREATE POLICY quoted_tenant ON "Caller Preview"."Quoted Table" '
+            "USING (\"Tenant ID\" = current_setting('juntai.tenant_id', true)) "
+            "WITH CHECK (\"Tenant ID\" = current_setting('juntai.tenant_id', true))"
+        )
+        cursor.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA axiom_preview, lattice_preview TO {}").format(
+                sql.Identifier(RUNTIME_ROLE)
+            )
+        )
+        cursor.execute(
+            sql.SQL('GRANT USAGE ON SCHEMA "Caller Preview" TO {}').format(
+                sql.Identifier(RUNTIME_ROLE)
+            )
+        )
+        cursor.execute(
+            sql.SQL(
+                "GRANT SELECT, INSERT, DELETE ON axiom_preview.site, lattice_preview.asset TO {}"
+            ).format(sql.Identifier(RUNTIME_ROLE))
+        )
+        cursor.execute(
+            sql.SQL('GRANT SELECT, INSERT, DELETE ON "Caller Preview"."Quoted Table" TO {}').format(
+                sql.Identifier(RUNTIME_ROLE)
+            )
+        )
+        cursor.execute(
+            sql.SQL("GRANT USAGE ON SCHEMA juntai_synthetic_data TO {}").format(
+                sql.Identifier(RUNTIME_ROLE)
+            )
+        )
+        cursor.execute(
+            sql.SQL(
+                "GRANT SELECT, INSERT, UPDATE ON juntai_synthetic_data.generations, "
+                "juntai_synthetic_data.generation_rows TO {}"
+            ).format(sql.Identifier(RUNTIME_ROLE))
         )
 
 
-@dataclass
-class _Inputs:
-    def publish_input(self, job, *, source_revision: str) -> ExactArtifactReference:
-        return ExactArtifactReference(
-            tenantId=job.tenant_id,
-            artifactId=f"art-input-{job.job_id}",
-            versionId="artv-input-1",
-            manifestDigest="sha256:" + "4" * 64,
-            mediaType=INPUT_MEDIA_TYPE,
-            byteLength=4096,
-            producerBuildId=source_revision,
-        )
-
-
-class _WorkerEngine:
-    def execute(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("socket worker must not execute during startup validation")
-
-    def failure_evidence(self, *args: Any, **kwargs: Any) -> Any:
-        raise AssertionError("socket worker must not publish during startup validation")
-
-
-def _request() -> CreateJobRequest:
-    return CreateJobRequest.model_validate(
+def _request(tenant_id: str, seed: str) -> CreateGenerationRequest:
+    return CreateGenerationRequest.model_validate(
         {
-            "contract_version": "juntai.synthetic-data.request/v1",
             "generation_contract": {
-                "contract_version": "juntai.synthetic-data.contract/v1",
                 "records": [
                     {
-                        "record_type": "record",
-                        "count": {"maximum": 1},
-                        "fields": {"id": {"type": "string", "unique": True}},
-                    }
+                        "record_type": "site",
+                        "count": 2,
+                        "destination": {
+                            "schema": "axiom_preview",
+                            "table": "site",
+                            "columns": {
+                                "tenant_id": "tenant_id",
+                                "site_id": "site_id",
+                                "name": "display_name",
+                            },
+                            "key_fields": ["site_id"],
+                        },
+                        "fields": {
+                            "tenant_id": {
+                                "type": "string",
+                                "distribution": {"kind": "constant", "value": tenant_id},
+                            },
+                            "site_id": {
+                                "type": "string",
+                                "unique": True,
+                                "distribution": {"kind": "uuid"},
+                            },
+                            "name": {"type": "string"},
+                        },
+                    },
+                    {
+                        "record_type": "asset",
+                        "count": 4,
+                        "destination": {
+                            "schema": "lattice_preview",
+                            "table": "asset",
+                            "columns": {
+                                "tenant_id": "tenant_id",
+                                "asset_id": "asset_id",
+                                "site_id": "site_id",
+                                "reading": "reading",
+                            },
+                            "key_fields": ["asset_id"],
+                        },
+                        "fields": {
+                            "tenant_id": {
+                                "type": "string",
+                                "distribution": {"kind": "constant", "value": tenant_id},
+                            },
+                            "asset_id": {"type": "string", "unique": True},
+                            "site_id": {"type": "string"},
+                            "reading": {"type": "number"},
+                        },
+                    },
                 ],
-                "relations": [],
-                "bounds": {"max_records": 1, "max_bytes": 4096, "max_shards": 1},
-                "output": {"format": "jsonl", "compression": "none"},
+                "relations": [{"from": "asset.site_id", "to": "site.site_id", "required": True}],
+                "bounds": {"max_records": 6, "max_bytes": 1_000_000},
             },
-            "seed": "kes-acceptance",
+            "seed": seed,
             "provider": {"class": "tabular", "requirements": {"deterministic": True}},
-            "policy": {"data_classification": "synthetic", "source_examples": "none"},
+            "policy": {"data_classification": "synthetic"},
         }
     )
 
 
-def _artifact(tenant_id: str, media_type: str, digit: str) -> ExactArtifactReference:
-    return ExactArtifactReference(
-        tenantId=tenant_id,
-        artifactId=f"art-{digit}",
-        versionId=f"artv-{digit}",
-        manifestDigest="sha256:" + digit * 64,
-        mediaType=media_type,
-        byteLength=128,
-        producerBuildId="a" * 40,
-    )
-
-
-def _worker_event(
-    dispatch: DispatchEnvelope,
-    *,
-    event_id: str,
-    event_type: str,
-    stage: str,
-    sequence: int,
-    outcome: str | None = None,
-) -> WorkerEventEnvelope:
-    now = datetime.now(UTC)
-    terminal = event_type == "TERMINAL"
-    return WorkerEventEnvelope(
-        messageId=f"message-{event_id}",
-        tenantId=dispatch.tenant_id,
-        jobId=dispatch.job_id,
-        attemptId=dispatch.attempt_id,
-        attemptNumber=dispatch.attempt_number,
-        sequence=sequence,
-        emittedAt=now,
-        deadline=now + timedelta(minutes=5),
-        correlationId=dispatch.correlation_id,
-        producerWorkload=WorkloadIdentity(namespace="juntai", serviceAccount="synthetic-executor"),
-        eventId=event_id,
-        eventType=event_type,
-        executionLeaseId="lease-kes-acceptance",
-        stage=stage,
-        progressBounds=ProgressBounds(completed=1, total=1),
-        observedCancelSequence=0,
-        workerImageDigest=dispatch.worker_image_digest,
-        protocolCapabilities=dispatch.required_capabilities,
-        evidenceCounters={"events": sequence + 1, "shards": 1},
-        outcome=outcome,
-        datasetArtifact=_artifact(
-            dispatch.tenant_id, "application/vnd.oci.image.manifest.v1+json", "6"
-        )
-        if outcome == "SUCCEEDED"
-        else None,
-        executionEvidenceArtifact=_artifact(dispatch.tenant_id, EVIDENCE_MEDIA_TYPE, "7")
-        if terminal
-        else None,
-        startedAt=now if terminal else None,
-        terminalAt=now if terminal else None,
-        outputRecords=1 if outcome == "SUCCEEDED" else None,
-        outputBytes=128 if outcome == "SUCCEEDED" else None,
-        consumedInputDigest=dispatch.request_digest if terminal else None,
-    ).signed()
-
-
-def _api_worker_startup(dsn: str) -> None:
-    repository = SqlJobRepository(lambda: psycopg.connect(dsn))
-    api = WorkloadIdentity(namespace="juntai", serviceAccount="synthetic-api")
-    executor = WorkloadIdentity(namespace="juntai", serviceAccount="synthetic-executor")
-    coordinator = WorkerCoordinator(
-        repository=repository,
-        inputs=_Inputs(),
-        source_revision="a" * 40,
-        worker_image_digest="sha256:" + "3" * 64,
-        api_workload=api,
-        executor_workload=executor,
-    )
-    service = SyntheticDataService(
-        repository=repository,
-        providers=ProviderRegistry(
-            (DeterministicTabularProvider(worker_image_digest="sha256:" + "3" * 64),)
-        ),
-        policy=DefaultPolicyEngine(),
-        quotas=InMemoryQuotaLedger(QuotaLimits()),
-        publisher=_Publisher(),
-        source_revision="a" * 40,
-        coordinator=coordinator,
-    )
-    server = build_server(service, enable_runtime=False)
-    assert server is not None
-    created = service.create_job("tenant-startup", "startup-key", _request())
-    rows = _execute(
-        dsn,
-        "SELECT canonical_bytes FROM juntai_synthetic_data.worker_outbox "
-        "WHERE tenant_id = %s AND job_id = %s",
-        ("tenant-startup", created.job_id),
-    )
-    dispatch = decode_envelope(bytes(rows[0][0]))
-    assert isinstance(dispatch, DispatchEnvelope)
-    service.accept_worker_event(
-        _worker_event(
-            dispatch,
-            event_id="event-kes-started",
-            event_type="STARTED",
-            stage="RUNNING",
-            sequence=0,
-        ),
-        authenticated_producer=executor,
-    )
-    service.accept_worker_event(
-        _worker_event(
-            dispatch,
-            event_id="event-kes-publishing",
-            event_type="STAGE",
-            stage="PUBLISHING",
-            sequence=1,
-        ),
-        authenticated_producer=executor,
-    )
-    terminal = _worker_event(
-        dispatch,
-        event_id="event-kes-terminal",
-        event_type="TERMINAL",
-        stage="PUBLISHING",
-        sequence=2,
-        outcome="SUCCEEDED",
-    )
-    assert service.accept_worker_event(terminal, authenticated_producer=executor) == "COMMITTED"
-    assert service.accept_worker_event(terminal, authenticated_producer=executor) == (
-        "RESULT_DUPLICATE"
-    )
-    assert service.get_job("tenant-startup", created.job_id).state.value == "SUCCEEDED"
-    assert len(service.result("tenant-startup", created.job_id).artifact.digest) == 71
-
-    validate_worker_isolation(
+def _quoted_destination_request(tenant_id: str) -> CreateGenerationRequest:
+    return CreateGenerationRequest.model_validate(
         {
-            "JUNTAI_SYNTHETIC_WORKER_PROTOCOL": PROTOCOL_VERSION,
-            "JUNTAI_SYNTHETIC_WORKER_SOCKET": SOCKET_PATH,
-        },
-        mountinfo="tmpfs /var/run/juntai-worker",
+            "generation_contract": {
+                "records": [
+                    {
+                        "record_type": "quoted",
+                        "count": 2,
+                        "destination": {
+                            "schema": "Caller Preview",
+                            "table": "Quoted Table",
+                            "columns": {"tenant_id": "Tenant ID", "row_id": "Row ID"},
+                            "key_fields": ["row_id"],
+                        },
+                        "fields": {
+                            "tenant_id": {
+                                "type": "string",
+                                "distribution": {"kind": "constant", "value": tenant_id},
+                            },
+                            "row_id": {"type": "string", "unique": True},
+                        },
+                    }
+                ],
+                "bounds": {"max_records": 2, "max_bytes": 100_000},
+            },
+            "seed": "quoted-destination-seed",
+            "provider": {"class": "tabular", "requirements": {"deterministic": True}},
+            "policy": {"data_classification": "synthetic"},
+        }
     )
-    worker = SocketWorker(
-        _WorkerEngine(),
-        workload=WorkloadIdentity(namespace="juntai", serviceAccount="synthetic-worker"),
+
+
+def _service(runtime_dsn: str) -> SyntheticDataService:
+    repository = SqlGenerationRepository(
+        lambda: psycopg.connect(runtime_dsn),
+        retry_base_seconds=0,
+        retry_cap_seconds=0,
     )
-    assert worker.engine.__class__ is _WorkerEngine
+    return SyntheticDataService(
+        repository=repository,
+        providers=ProviderRegistry((DeterministicTabularProvider(),)),
+        policy=DefaultPolicyEngine(),
+    )
+
+
+def _generation_matrix(admin_dsn: str) -> None:
+    runtime_dsn = _runtime_dsn(admin_dsn)
+    _prepare_application_schema(admin_dsn)
+    service = _service(runtime_dsn)
+    request_a = _request("tenant-a", "real-kes-seed-a")
+    created = service.create_generation("tenant-a", "real-kes-a", request_a)
+    assert not created.replayed and created.result.record_count == 6
+    assert _execute(admin_dsn, "SELECT count(*) FROM axiom_preview.site") == [(2,)]
+    assert _execute(admin_dsn, "SELECT count(*) FROM lattice_preview.asset") == [(4,)]
+    assert _execute(admin_dsn, "SELECT count(*) FROM juntai_synthetic_data.generation_rows") == [
+        (6,)
+    ]
+
+    replay = _service(runtime_dsn).create_generation("tenant-a", "real-kes-a", request_a)
+    assert replay.replayed and replay.result == created.result
+    assert (
+        _service(runtime_dsn).get_generation("tenant-a", created.result.generation_id)
+        == created.result
+    )
+
+    try:
+        service.create_generation("tenant-a", "collision", request_a)
+    except SyntheticDataError as error:
+        assert error.code is ErrorCode.DESTINATION_CONFLICT
+    else:
+        raise AssertionError("destination collision unexpectedly committed")
+    assert _execute(
+        admin_dsn,
+        "SELECT count(*) FROM juntai_synthetic_data.generations WHERE tenant_id = 'tenant-a'",
+    ) == [(1,)]
+
+    invalid_data = request_a.model_dump(mode="json", by_alias=True)
+    invalid_data["generation_contract"]["records"][0]["destination"]["schema"] = "Missing Schema"
+    invalid_request = CreateGenerationRequest.model_validate(invalid_data)
+    try:
+        service.create_generation("tenant-a", "missing-destination", invalid_request)
+    except SyntheticDataError as error:
+        assert error.code is ErrorCode.DESTINATION_INVALID
+    else:
+        raise AssertionError("nonexistent caller destination unexpectedly committed")
+    assert _execute(admin_dsn, "SELECT count(*) FROM axiom_preview.site") == [(2,)]
+    assert _execute(admin_dsn, "SELECT count(*) FROM lattice_preview.asset") == [(4,)]
+    assert _execute(
+        admin_dsn,
+        "SELECT count(*) FROM juntai_synthetic_data.generations WHERE tenant_id = 'tenant-a'",
+    ) == [(1,)]
+
+    quoted = service.create_generation(
+        "tenant-a", "quoted-destination", _quoted_destination_request("tenant-a")
+    )
+    assert quoted.result.record_count == 2
+    assert _execute(admin_dsn, 'SELECT count(*) FROM "Caller Preview"."Quoted Table"') == [(2,)]
+    assert (
+        service.delete_generation("tenant-a", quoted.result.generation_id).state.value == "DELETED"
+    )
+    assert _execute(admin_dsn, 'SELECT count(*) FROM "Caller Preview"."Quoted Table"') == [(0,)]
+
+    request_b = _request("tenant-b", "real-kes-seed-b")
+    created_b = service.create_generation("tenant-b", "real-kes-b", request_b)
+    assert created_b.result.record_count == 6
+    with psycopg.connect(runtime_dsn) as connection, connection.cursor() as cursor:
+        cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-a', false)")
+        cursor.execute("SELECT count(*) FROM juntai_synthetic_data.generations")
+        assert cursor.fetchone() == (2,)
+        cursor.execute("SELECT count(*) FROM axiom_preview.site")
+        assert cursor.fetchone() == (2,)
+        cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-b', false)")
+        cursor.execute("SELECT count(*) FROM juntai_synthetic_data.generations")
+        assert cursor.fetchone() == (1,)
+        cursor.execute("SELECT count(*) FROM lattice_preview.asset")
+        assert cursor.fetchone() == (4,)
+
+    deleted = service.delete_generation("tenant-b", created_b.result.generation_id)
+    assert deleted.state.value == "DELETED"
+    assert service.delete_generation("tenant-b", created_b.result.generation_id) == deleted
+    assert _execute(admin_dsn, "SELECT count(*) FROM axiom_preview.site") == [(2,)]
+    assert _execute(admin_dsn, "SELECT count(*) FROM lattice_preview.asset") == [(4,)]
 
 
 def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
@@ -426,18 +423,7 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
     _concurrency(dsn, binding)
     _partial_failure(dsn, binding)
     _released_baseline_upgrade(dsn, binding)
-    _reset(dsn)
-    assert apply_migrations(dsn, binding).applied == (
-        "0001_jobs",
-        "0002_worker_protocol",
-    )
-    _tenant_isolation(dsn)
-    _reset(dsn)
-    assert apply_migrations(dsn, binding).applied == (
-        "0001_jobs",
-        "0002_worker_protocol",
-    )
-    _api_worker_startup(dsn)
+    _generation_matrix(dsn)
     return {
         "phase": "primary",
         "checks": [
@@ -446,11 +432,17 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
             "concurrency-lock",
             "transactional-partial-failure",
             "transactional-failure-recovery",
-            "released-1.1.0-baseline-upgrade",
-            "tenant-rls-isolation-all-swp-tables",
-            "atomic-outbox-result-replay",
-            "post-migration-api-startup",
-            "post-migration-worker-startup-no-kes",
+            "released-1.2.0-baseline-upgrade",
+            "cross-schema-atomic-write",
+            "idempotent-replay",
+            "lost-response-recovery",
+            "destination-conflict-rollback",
+            "database-destination-rejection",
+            "quoted-caller-destination",
+            "exact-key-delete",
+            "delete-idempotence",
+            "tenant-rls-isolation",
+            "no-platform-database-dependency",
         ],
     }
 
@@ -458,7 +450,16 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
 def _post_restart(dsn: str, binding: MigrationBinding) -> dict[str, object]:
     result = apply_migrations(dsn, binding)
     assert result.status == "current"
-    assert result.current == ("0001_jobs", "0002_worker_protocol")
+    assert result.current == tuple(item.migration_id for item in load_migrations())
+    runtime_dsn = _runtime_dsn(dsn)
+    rows = _execute(
+        dsn,
+        "SELECT generation_id FROM juntai_synthetic_data.generations "
+        "WHERE tenant_id = 'tenant-a' AND state = 'COMMITTED'",
+    )
+    assert len(rows) == 1
+    recovered = _service(runtime_dsn).get_generation("tenant-a", str(rows[0][0]))
+    assert recovered.state.value == "COMMITTED"
     return {"phase": "post-restart", "checks": ["database-restart", "ledger-current"]}
 
 
@@ -473,7 +474,7 @@ def main() -> None:
             "sourceRevision": binding.source_revision,
             "serviceImageDigest": binding.image_digest,
             "migrationIds": [item.migration_id for item in load_migrations()],
-            "databaseVersion": _execute(dsn, "SELECT version()")[0][0],
+            "databaseVersion": _execute(dsn, "SELECT version()")[-1][0],
         }
     )
     print(json.dumps(evidence, sort_keys=True))

@@ -15,21 +15,14 @@ from juntai_synthetic_data.contracts.models import (
     FieldType,
     GenerationContract,
 )
-from juntai_synthetic_data.dataset import BoundedDatasetSink, DatasetOutput
+from juntai_synthetic_data.dataset import GeneratedDataset, validate_generated_dataset
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 
-from .base import GenerationExecutionContext, GeneratorProviderManifest
-
-_REFERENCE_IMAGE_DIGEST = (
-    "sha256:"
-    + hashlib.sha256(
-        b"ghcr.io/zephytiju/juntai-synthetic-data-generation:reference-worker-v1"
-    ).hexdigest()
-)
+from .base import GeneratorProviderManifest
 
 
 class DeterministicTabularProvider:
-    def __init__(self, *, worker_image_digest: str = _REFERENCE_IMAGE_DIGEST) -> None:
+    def __init__(self) -> None:
         self.manifest = GeneratorProviderManifest(
             provider_id="juntai.synthetic-data.tabular",
             version="1.0.0",
@@ -38,13 +31,10 @@ class DeterministicTabularProvider:
             generation_modes=frozenset({"tabular"}),
             deterministic_seed=True,
             privacy_classes=frozenset({"synthetic", "internal"}),
-            formats=frozenset({"jsonl", "csv"}),
             distributions=frozenset(item.value for item in DistributionKind),
             maximum_records=1_000_000,
             maximum_bytes=1_073_741_824,
-            network_policy="deny-all",
-            worker_image_digest=worker_image_digest,
-            reproducibility="logical-dataset-digest",
+            reproducibility="canonical-data-digest",
         )
 
     def validate(self, contract: GenerationContract) -> None:
@@ -80,17 +70,23 @@ class DeterministicTabularProvider:
         if spec.nullable and randomizer.random() < 0.05:
             return None
         if distribution is None:
+            seed_digest = hashlib.sha256(f"{seed}\0{record_type}\0{field_name}".encode()).digest()
             if spec.type is FieldType.STRING:
-                return f"{record_type}_{field_name}_{index:08d}"
+                seed_prefix = seed_digest.hex()[:12]
+                return f"{record_type}_{field_name}_{seed_prefix}_{index:08d}"
             if spec.type is FieldType.INTEGER:
-                return index
+                return int.from_bytes(seed_digest[:4], "big") % 1_000_000_000 + index
             if spec.type is FieldType.NUMBER:
-                return float(index)
+                return float(int.from_bytes(seed_digest[:4], "big") % 1_000_000_000 + index)
             if spec.type is FieldType.BOOLEAN:
-                return bool(index % 2)
+                return bool((seed_digest[0] + index) % 2)
             if spec.type is FieldType.DATE:
-                return (date(2000, 1, 1) + timedelta(days=index)).isoformat()
-            return (datetime(2000, 1, 1, tzinfo=UTC) + timedelta(seconds=index)).isoformat()
+                offset = int.from_bytes(seed_digest[:2], "big") % 3_650
+                return (date(2000, 1, 1) + timedelta(days=offset + index)).isoformat()
+            offset = int.from_bytes(seed_digest[:4], "big")
+            return (
+                datetime(2000, 1, 1, tzinfo=UTC) + timedelta(seconds=offset + index)
+            ).isoformat()
         kind = distribution.kind
         if kind is DistributionKind.CONSTANT:
             return distribution.value
@@ -99,9 +95,8 @@ class DeterministicTabularProvider:
         if kind is DistributionKind.CHOICE:
             return distribution.values[randomizer.randrange(len(distribution.values))]
         if kind is DistributionKind.UUID:
-            raw = hashlib.sha256(f"{seed}:{record_type}:{field_name}:{index}".encode()).digest()[
-                :16
-            ]
+            material = f"{seed}:{record_type}:{field_name}:{index}".encode()
+            raw = hashlib.sha256(material).digest()[:16]
             return str(uuid.UUID(bytes=raw, version=4))
         if kind is DistributionKind.UNIFORM:
             assert distribution.minimum is not None and distribution.maximum is not None
@@ -113,44 +108,35 @@ class DeterministicTabularProvider:
             return round(value) if spec.type is FieldType.INTEGER else value
         raise AssertionError(f"unsupported distribution: {kind}")
 
-    def generate(
-        self,
-        contract: GenerationContract,
-        seed: str,
-        output: BoundedDatasetSink,
-        context: GenerationExecutionContext,
-    ) -> DatasetOutput:
-        generated: dict[str, list[dict[str, Any]]] = {}
+    def generate(self, contract: GenerationContract, seed: str) -> GeneratedDataset:
+        generated: dict[str, tuple[dict[str, Any], ...]] = {}
         for record_spec in contract.records:
-            records: list[dict[str, Any]] = []
-            for index in range(record_spec.count.maximum):
-                if index % 100 == 0:
-                    context.checkpoint()
-                record = {
-                    name: self._value(
-                        seed=seed,
-                        record_type=record_spec.record_type,
-                        field_name=name,
-                        index=index,
-                        spec=field,
-                    )
-                    for name, field in sorted(record_spec.fields.items())
-                }
-                records.append(record)
-            generated[record_spec.record_type] = records
+            rows = []
+            for index in range(record_spec.count):
+                rows.append(
+                    {
+                        name: self._value(
+                            seed=seed,
+                            record_type=record_spec.record_type,
+                            field_name=name,
+                            index=index,
+                            spec=field,
+                        )
+                        for name, field in sorted(record_spec.fields.items())
+                    }
+                )
+            generated[record_spec.record_type] = tuple(rows)
         for relation in contract.relations:
             source_type, source_field = relation.from_field.split(".", 1)
             target_type, target_field = relation.to_field.split(".", 1)
             target_values = [row[target_field] for row in generated[target_type]]
             if not target_values and relation.required:
                 raise SyntheticDataError(
-                    ErrorCode.CONTRACT_INVALID, "required relation has no target"
+                    ErrorCode.CONTRACT_INVALID,
+                    "required relation has no target",
                 )
             for index, row in enumerate(generated[source_type]):
                 row[source_field] = (
                     target_values[index % len(target_values)] if target_values else None
                 )
-        for record_type, records in generated.items():
-            for record in records:
-                output.write(record_type, record)
-        return output.finalize()
+        return validate_generated_dataset(contract, generated)

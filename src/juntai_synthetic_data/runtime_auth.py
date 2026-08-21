@@ -18,6 +18,7 @@ from juntai.iam import (
 )
 
 from juntai_synthetic_data.api.auth import JuntaiIamAuthorizer
+from juntai_synthetic_data.iam_contract import validate_iam_runtime
 
 
 class ImmutableFilePolicySource:
@@ -63,10 +64,11 @@ def build_runtime_authorizer(
     policy_snapshot_path: str,
     discovery_url: str | None = None,
 ) -> JuntaiIamAuthorizer:
+    validate_iam_runtime()
     verifier = CasdoorAccessTokenVerifier(
         issuer=issuer,
         audiences=audiences,
-        required_scopes=("synthetic-data:jobs",),
+        required_scopes=("synthetic-data:generations",),
         discovery_url=discovery_url,
         required_token_type="access-token",
     )

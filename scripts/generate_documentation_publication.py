@@ -11,9 +11,9 @@ from typing import Any
 from juntai.documentation.canonical import canonical_json_bytes
 
 REPOSITORY = "zephytiju/JuntaiSyntheticDataGeneration"
-RELEASE_VERSION = "1.2.0"
+RELEASE_VERSION = "1.3.0"
 PACKAGER_VERSION = "1.0.0"
-DOCUMENTED_SOURCE_COMMIT = "a7511342311e84baf9f65045b8c9e72d4b3f23bd"
+DOCUMENTED_SOURCE_COMMIT = "0000000000000000000000000000000000000000"
 DOCUMENTATION_CAPABILITY_SOURCE = "d7cd9b6860b7a716b210efdf66ae20e0f1d87a33"
 DOCUMENTATION_CAPABILITY_WHEEL = (
     "sha256:82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33"
@@ -122,18 +122,17 @@ def main() -> int:
     record = {
         "title": "Synthetic Data Generation",
         "summary": (
-            "Exact bearer-IAM, SWP/v1 worker isolation, bounded job, Artifact, provenance, "
-            "migration, and safety documentation."
+            "Synchronous test-fleet application-data generation, exact logical destinations, "
+            "bearer IAM, atomic KingbaseES writes, recovery, deletion, and safety documentation."
         ),
         "ownerKey": build["ownerKey"],
         "visibility": "internal",
         "lifecycle": "release",
         "locales": ["en"],
         "taskClasses": [
-            "synthetic-data.jobs.cancel",
-            "synthetic-data.jobs.create",
-            "synthetic-data.jobs.monitor",
-            "synthetic-data.jobs.result",
+            "synthetic-data.generations.create",
+            "synthetic-data.generations.delete",
+            "synthetic-data.generations.read",
         ],
         "compatibility": {"platform": ">=4.0 <5.0"},
         "routeKey": "platform.documentation",
@@ -162,7 +161,7 @@ def main() -> int:
             "mcpDescriptorDigest": pin["mcpDescriptorDigest"],
             "openapiDigest": pin["openapiDigest"],
             "platformVersion": "4.0.0",
-            "taskClass": "synthetic-data.jobs.result",
+            "taskClass": "synthetic-data.generations.read",
             "locale": "en",
         },
     )

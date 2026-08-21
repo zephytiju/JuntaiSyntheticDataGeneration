@@ -2,7 +2,7 @@ name: Publish immutable image and contracts
 
 on:
   push:
-    branches: [main, "agent/synthetic-worker-isolation-v*"]
+    branches: [main]
     paths-ignore: ["release-evidence/**"]
 
 permissions:
@@ -14,6 +14,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.image.outputs.digest }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -25,10 +27,9 @@ jobs:
       - run: ruff format --check .
       - run: pytest -q
       - run: python scripts/generate_openapi.py
-      - run: python scripts/generate_worker_protocol.py
       - run: python scripts/generate_fixture.py
       - run: python scripts/generate_documentation_contracts.py
-      - run: git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
+      - run: git diff --exit-code -- openapi fixtures documentation/contracts
       - name: Generate exact merged-commit OpenAPI artifact
         env:
           SOURCE_COMMIT: ${{ github.sha }}
@@ -52,7 +53,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=1.2.0
+            org.opencontainers.image.version=1.3.0
       - uses: actions/attest-build-provenance@v3
         with:
           subject-name: ghcr.io/zephytiju/juntai-synthetic-data-generation
@@ -65,6 +66,7 @@ jobs:
         run: |
           printf '%s\n' "image=ghcr.io/zephytiju/juntai-synthetic-data-generation@${IMAGE_DIGEST}" > dist/publication-evidence.txt
           printf '%s\n' "source=${SOURCE_COMMIT}" >> dist/publication-evidence.txt
+          python -m pip freeze | sort >> dist/publication-evidence.txt
           shasum -a 256 openapi/synthetic-data-generation.v1.json >> dist/publication-evidence.txt
           shasum -a 256 fixtures/* >> dist/publication-evidence.txt
       - uses: actions/upload-artifact@v5
@@ -76,10 +78,21 @@ jobs:
             fixtures/
             migrations/0001_jobs.sql
             migrations/0002_worker_protocol.sql
+            migrations/0003_synchronous_generations.sql
             migrations/manifest.v1.json
-            contracts/worker-protocol/
             openapi/synthetic-data-generation.v1.json
             openapi/synthetic-data-generation.v1.sha256
             documentation/contracts/
           if-no-files-found: error
           retention-days: 90
+
+  licensed-acceptance:
+    needs: publish
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/acceptance.yml
+    with:
+      source_revision: ${{ github.sha }}
+      image_digest: ${{ needs.publish.outputs.image_digest }}
+    secrets: inherit

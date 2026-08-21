@@ -1,49 +1,57 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from juntai.usage import UsageReporter
 
-from juntai_synthetic_data.contracts.models import CreateJobRequest
-from juntai_synthetic_data.jobs import InMemoryJobRepository
+from juntai_synthetic_data.contracts.models import CreateGenerationRequest, FieldType
+from juntai_synthetic_data.persistence import (
+    ForeignKeyDefinition,
+    InMemoryGenerationRepository,
+    TableDefinition,
+)
 from juntai_synthetic_data.policy import DefaultPolicyEngine
 from juntai_synthetic_data.providers import DeterministicTabularProvider, ProviderRegistry
-from juntai_synthetic_data.publication import PublishedDataset
-from juntai_synthetic_data.quotas import InMemoryQuotaLedger, QuotaLimits
 from juntai_synthetic_data.service import SyntheticDataService
-from juntai_synthetic_data.validators import (
-    SandboxExecutionRequest,
-    SandboxExecutionResult,
-    ValidatorSandbox,
-)
-
-IMAGE_DIGEST = "sha256:" + "1" * 64
-ARTIFACT_DIGEST = "sha256:" + "2" * 64
-VALIDATOR_DIGEST = "sha256:" + "3" * 64
 
 
-def request_data(*, validator: bool = False, max_bytes: int = 1_000_000) -> dict[str, Any]:
-    value: dict[str, Any] = {
+def request_data(*, max_bytes: int = 1_000_000) -> dict[str, Any]:
+    return {
         "contract_version": "juntai.synthetic-data.request/v1",
         "generation_contract": {
             "contract_version": "juntai.synthetic-data.contract/v1",
             "records": [
                 {
                     "record_type": "site",
-                    "count": {"maximum": 3},
+                    "count": 3,
+                    "destination": {
+                        "schema": "axiom_preview",
+                        "table": "site",
+                        "columns": {"site_id": "site_id", "name": "display_name"},
+                        "key_fields": ["site_id"],
+                    },
                     "fields": {
                         "site_id": {
                             "type": "string",
                             "unique": True,
-                            "distribution": {"kind": "sequence", "start": 100, "step": 1},
-                        }
+                            "distribution": {"kind": "uuid"},
+                        },
+                        "name": {"type": "string"},
                     },
                 },
                 {
                     "record_type": "asset",
-                    "count": {"maximum": 6},
+                    "count": 6,
+                    "destination": {
+                        "schema": "lattice_preview",
+                        "table": "asset",
+                        "columns": {
+                            "asset_id": "asset_id",
+                            "site_id": "site_id",
+                            "reading": "reading",
+                        },
+                        "key_fields": ["asset_id"],
+                    },
                     "fields": {
                         "asset_id": {"type": "string", "unique": True},
                         "site_id": {"type": "string"},
@@ -55,80 +63,59 @@ def request_data(*, validator: bool = False, max_bytes: int = 1_000_000) -> dict
                 },
             ],
             "relations": [{"from": "asset.site_id", "to": "site.site_id", "required": True}],
-            "bounds": {"max_records": 9, "max_bytes": max_bytes, "max_shards": 4},
-            "output": {"format": "jsonl", "compression": "none"},
+            "bounds": {"max_records": 9, "max_bytes": max_bytes},
         },
         "seed": "acceptance-seed-1",
         "provider": {"class": "tabular", "requirements": {"deterministic": True}},
-        "policy": {"data_classification": "synthetic", "source_examples": "none"},
+        "policy": {"data_classification": "synthetic"},
     }
-    if validator:
-        value["validator"] = {
-            "artifact_id": "art_validator",
-            "version_id": "artv_validator_1",
-            "digest": VALIDATOR_DIGEST,
-            "entry_point": "validator:validate_dataset",
-        }
-    return value
 
 
-@pytest.fixture
-def sample_request() -> CreateJobRequest:
-    return CreateJobRequest.model_validate(request_data())
+def catalog() -> dict[tuple[str, str], TableDefinition]:
+    return {
+        ("axiom_preview", "site"): TableDefinition(
+            columns={"site_id": FieldType.STRING, "display_name": FieldType.STRING},
+            unique_keys=(("site_id",),),
+            required_columns=frozenset({"site_id", "display_name"}),
+        ),
+        ("lattice_preview", "asset"): TableDefinition(
+            columns={
+                "asset_id": FieldType.STRING,
+                "site_id": FieldType.STRING,
+                "reading": FieldType.NUMBER,
+            },
+            unique_keys=(("asset_id",),),
+            required_columns=frozenset({"asset_id", "site_id", "reading"}),
+            foreign_keys=(
+                ForeignKeyDefinition(
+                    columns=("site_id",),
+                    target_schema="axiom_preview",
+                    target_table="site",
+                    target_columns=("site_id",),
+                ),
+            ),
+        ),
+    }
 
 
-@dataclass
-class FakePublisher:
-    fail: bool = False
-    calls: list[dict[str, Any]] = field(default_factory=list)
-
-    def publish(self, **kwargs: Any) -> PublishedDataset:
-        self.calls.append(kwargs)
-        if self.fail:
-            from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
-
-            raise SyntheticDataError(ErrorCode.PUBLICATION_FAILED, "simulated", retryable=True)
-        return PublishedDataset(
-            artifact_id="art_dataset",
-            version_id="artv_dataset_1",
-            digest=ARTIFACT_DIGEST,
-            media_type="application/vnd.oci.image.manifest.v1+json",
-        )
-
-
-class PassingExecutor:
-    def __init__(self) -> None:
-        self.requests: list[SandboxExecutionRequest] = []
-
-    def execute(self, request: SandboxExecutionRequest) -> SandboxExecutionResult:
-        self.requests.append(request)
-        return SandboxExecutionResult(passed=True, findings=("valid",))
-
-
-class ExactResolver:
-    def __init__(self) -> None:
-        self.descriptors = []
-
-    def resolve_exact(self, descriptor):
-        self.descriptors.append(descriptor)
-        return (b"exact-validator-artifact",)
+def make_repository() -> InMemoryGenerationRepository:
+    return InMemoryGenerationRepository(catalog())
 
 
 def make_service(
     *,
-    publisher: FakePublisher | None = None,
-    executor: PassingExecutor | None = None,
-    limits: QuotaLimits | None = None,
-    usage_reporter: UsageReporter | None = None,
+    repository: InMemoryGenerationRepository | None = None,
+    monotonic=lambda: 0.0,
 ) -> SyntheticDataService:
-    provider = DeterministicTabularProvider(worker_image_digest=IMAGE_DIGEST)
+    provider = DeterministicTabularProvider()
     return SyntheticDataService(
-        repository=InMemoryJobRepository(),
+        repository=repository or make_repository(),
         providers=ProviderRegistry((provider,)),
         policy=DefaultPolicyEngine(),
-        quotas=InMemoryQuotaLedger(limits),
-        publisher=publisher or FakePublisher(),
-        validator_sandbox=ValidatorSandbox(executor, ExactResolver()) if executor else None,
-        usage_reporter=usage_reporter,
-        source_revision="a" * 40,
+        monotonic=monotonic,
     )
+
+
+@pytest.fixture
+def sample_request() -> CreateGenerationRequest:
+    return CreateGenerationRequest.model_validate(request_data())

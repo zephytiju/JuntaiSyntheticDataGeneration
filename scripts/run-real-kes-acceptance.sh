@@ -6,7 +6,6 @@ service_image="${1:-juntai-synthetic-data-generation:kes-acceptance}"
 evidence_path="${2:-}"
 kes_container="juntai-synthetic-kes-acceptance-01u"
 kes_network="juntai-synthetic-kes-acceptance-01u"
-worker_network="juntai-synthetic-worker-isolation-01v"
 kes_data="juntai-synthetic-kes-data-01u"
 kes_secrets="juntai-synthetic-kes-secrets-01u"
 service_secrets="juntai-synthetic-service-secrets-01u"
@@ -18,13 +17,11 @@ cleanup() {
   docker rm -f "$kes_container" >/dev/null 2>&1 || true
   docker volume rm -f "$kes_data" "$kes_secrets" "$service_secrets" >/dev/null 2>&1 || true
   docker network rm "$kes_network" >/dev/null 2>&1 || true
-  docker network rm "$worker_network" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 cleanup
 
 docker network create "$kes_network" >/dev/null
-docker network create --internal "$worker_network" >/dev/null
 docker volume create "$kes_data" >/dev/null
 docker volume create "$kes_secrets" >/dev/null
 docker volume create "$service_secrets" >/dev/null
@@ -76,20 +73,6 @@ wait_for_kes() {
 
 wait_for_kes
 
-worker_isolation_evidence="$(docker run --rm --network "$worker_network" \
-  -e JUNTAI_SYNTHETIC_WORKER_PROTOCOL=juntai.synthetic.worker/v1 \
-  -e JUNTAI_SYNTHETIC_WORKER_SOCKET=/var/run/juntai-worker/swp-v1.sock \
-  --entrypoint python "$service_image" -c \
-  'import json,socket
-from juntai_synthetic_data.worker import validate_worker_isolation
-validate_worker_isolation(mountinfo="tmpfs /var/run/juntai-worker")
-try:
-    socket.create_connection(("juntai-synthetic-kes-acceptance-01u", 54321), timeout=1)
-except OSError:
-    print(json.dumps({"check":"worker-kes-network-denied","result":"passed"},sort_keys=True))
-else:
-    raise SystemExit("isolated worker unexpectedly reached KES")')"
-
 primary_evidence="$(docker run --rm --network "$kes_network" \
   -v "$service_secrets:/run/secrets:ro" \
   -e JUNTAI_SOURCE_REVISION="$source_revision" \
@@ -112,11 +95,9 @@ restart_evidence="$(docker run --rm --network "$kes_network" \
 if [ -n "$evidence_path" ]; then
   python scripts/compose_real_kes_evidence.py \
     --primary "$primary_evidence" --post-restart "$restart_evidence" \
-    --worker-isolation "$worker_isolation_evidence" \
     --kes-image "$kes_image" --out "$evidence_path"
 else
   python scripts/compose_real_kes_evidence.py \
     --primary "$primary_evidence" --post-restart "$restart_evidence" \
-    --worker-isolation "$worker_isolation_evidence" \
     --kes-image "$kes_image"
 fi

@@ -1,4 +1,4 @@
-"""Compose the exact immutable Synthetic 1.2.0 service and migration release assets."""
+"""Compose the exact immutable Synthetic 1.3.0 service and migration release assets."""
 
 from __future__ import annotations
 
@@ -14,8 +14,13 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).parents[1]
-VERSION = "1.2.0"
-RELEASE_TAG = "synthetic-data-v1.2.0"
+VERSION = "1.3.0"
+RELEASE_TAG = "synthetic-data-v1.3.0"
+IAM_SOURCE_COMMIT = "72b481ed825c00d0bd96feca67790e90dc5ace9b"
+IAM_WHEEL_SHA256 = "007362537726dbd69c75952b73c62b90e4f7ea92a48ab214ba0ad3ffcb533e6c"
+IAM_CONTRACTS_SOURCE_COMMIT = "a37b6d6daaba75efd8c15c19b440a3081ba761c5"
+IAM_CONTRACTS_WHEEL_SHA256 = "e1daa81386669cfbf74b119c73f822d80a2f5e7a64a187538c54dcff07643cf1"
+IAM_CONTRACT_MANIFEST_SHA256 = "64dafb25c54d40320347c8661960d23ba524a2d3c102d112c08c95679d12db85"
 KES_IMAGE = (
     "kingbase_v009r001c010b0004_single_x86:v1@"
     "sha256:0bce318e74adca7a3d619b55b336269017507fd679833b7ce5d8400289661724"
@@ -90,7 +95,11 @@ def _validate(args: argparse.Namespace, evidence: dict[str, Any]) -> None:
         raise SystemExit("real-KES evidence image differs from release image")
     if evidence.get("kingbaseImage") != KES_IMAGE:
         raise SystemExit("real-KES evidence used an unexpected KingbaseES image")
-    if evidence.get("migrationIds") != ["0001_jobs", "0002_worker_protocol"]:
+    if evidence.get("migrationIds") != [
+        "0001_jobs",
+        "0002_worker_protocol",
+        "0003_synchronous_generations",
+    ]:
         raise SystemExit("real-KES evidence used an unexpected migration set")
 
 
@@ -108,6 +117,9 @@ def main() -> int:
         wheel: wheel.name,
         ROOT / "migrations" / "0001_jobs.sql": "0001_jobs.sql",
         ROOT / "migrations" / "0002_worker_protocol.sql": "0002_worker_protocol.sql",
+        ROOT / "migrations" / "0003_synchronous_generations.sql": (
+            "0003_synchronous_generations.sql"
+        ),
         ROOT / "migrations" / "manifest.v1.json": "migration-set.v1.json",
         ROOT / "openapi" / "synthetic-data-generation.v1.json": (
             "synthetic-data-generation.openapi.v1.json"
@@ -115,12 +127,9 @@ def main() -> int:
         ROOT / "openapi" / "synthetic-data-generation.v1.sha256": (
             "synthetic-data-generation.openapi.v1.sha256"
         ),
-        ROOT / "contracts" / "worker-protocol" / "swp.v1.schema.json": (
-            "synthetic-worker-protocol.v1.schema.json"
-        ),
-        ROOT / "contracts" / "worker-protocol" / "swp.v1.sha256": (
-            "synthetic-worker-protocol.v1.sha256"
-        ),
+        ROOT / "fixtures" / "generation-request.v1.json": "generation-request.v1.json",
+        ROOT / "fixtures" / "generation-records.v1.json": "generation-records.v1.json",
+        ROOT / "fixtures" / "SHA256SUMS": "fixture-SHA256SUMS",
         ROOT / "documentation" / "contracts" / "openapi.json": ("documentation.openapi.v1.json"),
         ROOT / "documentation" / "contracts" / "mcp-descriptor.json": (
             "documentation.mcp-descriptor.v1.json"
@@ -188,12 +197,32 @@ def main() -> int:
         "image": image_reference,
         "imageSbom": "OCI BuildKit SBOM attached to the image index",
         "imageProvenance": "GitHub artifact attestation and OCI BuildKit provenance",
-        "workerProtocolSha256": _digest(output / "synthetic-worker-protocol.v1.schema.json"),
+        "runtimeBinding": {
+            "argv": ["juntai-synthetic-data", "serve"],
+            "testFleetAdmission": {
+                "environmentVariable": "JUNTAI_SYNTHETIC_DATA_TEST_FLEET",
+                "requiredValue": "true",
+                "comparison": "exact",
+            },
+            "databaseDsnFileEnvironment": "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE",
+            "iamAudience": "juntai.synthetic-data.api",
+        },
         "documentationOpenapiSha256": _digest(output / "documentation.openapi.v1.json"),
         "documentationMcpSha256": _digest(output / "documentation.mcp-descriptor.v1.json"),
         "migrationManifest": {
             "name": "migration-release-manifest.json",
             "sha256": _digest(output / "migration-release-manifest.json"),
+        },
+        "externalContracts": {
+            "iam": {
+                "version": "1.1.0",
+                "sourceCommit": IAM_SOURCE_COMMIT,
+                "wheelSha256": IAM_WHEEL_SHA256,
+                "contractsVersion": "1.1.1",
+                "contractsSourceCommit": IAM_CONTRACTS_SOURCE_COMMIT,
+                "contractsWheelSha256": IAM_CONTRACTS_WHEEL_SHA256,
+                "contractManifestSha256": IAM_CONTRACT_MANIFEST_SHA256,
+            }
         },
         "artifacts": base_assets,
     }
@@ -204,11 +233,11 @@ def main() -> int:
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
         "SPDXID": "SPDXRef-DOCUMENT",
-        "name": "juntai-synthetic-data-generation-1.2.0-release",
+        "name": "juntai-synthetic-data-generation-1.3.0-release",
         "documentNamespace": f"https://github.com/{args.repository}/actions/runs/{args.run_id}/sbom",
         "creationInfo": {
             "created": _created_at(),
-            "creators": ["Tool: generate_service_release.py-1.2.0"],
+            "creators": ["Tool: generate_service_release.py-1.3.0"],
         },
         "packages": [
             {
@@ -252,6 +281,14 @@ def main() -> int:
                     },
                     {"uri": f"pkg:oci/{args.image}@{args.image_digest}"},
                     {"uri": f"pkg:oci/{KES_IMAGE}"},
+                    {
+                        "uri": "pkg:pypi/juntai-iam@1.1.0",
+                        "digest": {"sha256": IAM_WHEEL_SHA256},
+                    },
+                    {
+                        "uri": "pkg:pypi/juntai-iam-contracts@1.1.1",
+                        "digest": {"sha256": IAM_CONTRACTS_WHEEL_SHA256},
+                    },
                 ],
             },
             "runDetails": {

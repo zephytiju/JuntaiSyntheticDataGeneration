@@ -1,11 +1,11 @@
-"""One generic versioned FuseAPI job surface."""
+"""Synchronous V1 generation API."""
 
 from __future__ import annotations
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 from juntai.sdk.fuse_api import EndpointGroup, FuseServer, ProfileSelectionRequest, select_profile
 
-from juntai_synthetic_data.contracts.models import CreateJobRequest, JobResult, JobStatus
+from juntai_synthetic_data.contracts.models import CreateGenerationRequest, GenerationResult
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.service import SyntheticDataService
 
@@ -14,27 +14,29 @@ from .auth import RequestAuthorizer, UnconfiguredAuthorizer
 _HTTP_STATUS = {
     ErrorCode.CONTRACT_INVALID: 422,
     ErrorCode.PROVIDER_UNSUPPORTED: 422,
-    ErrorCode.DETERMINISTIC_SEED_INCOMPATIBLE: 422,
     ErrorCode.POLICY_DENIED: 403,
-    ErrorCode.QUOTA_EXCEEDED: 429,
+    ErrorCode.OUTPUT_LIMIT_EXCEEDED: 422,
+    ErrorCode.DESTINATION_INVALID: 422,
+    ErrorCode.DESTINATION_FORBIDDEN: 403,
+    ErrorCode.DESTINATION_CONFLICT: 409,
     ErrorCode.IDEMPOTENCY_KEY_REUSED: 409,
-    ErrorCode.JOB_NOT_FOUND: 404,
-    ErrorCode.JOB_NOT_SUCCEEDED: 409,
-    ErrorCode.CONCURRENCY_CONFLICT: 409,
+    ErrorCode.GENERATION_NOT_FOUND: 404,
+    ErrorCode.DELETE_CONFLICT: 409,
+    ErrorCode.DEPENDENCY_UNAVAILABLE: 503,
 }
 
 
 def _raise_http(error: SyntheticDataError) -> None:
-    raise HTTPException(status_code=_HTTP_STATUS.get(error.code, 503), detail=error.to_dict())
+    raise HTTPException(status_code=_HTTP_STATUS[error.code], detail=error.to_dict())
 
 
-def build_job_group(
+def build_generation_group(
     service: SyntheticDataService,
     authorizer: RequestAuthorizer | None = None,
 ) -> EndpointGroup:
     authorizer = authorizer or UnconfiguredAuthorizer()
-    jobs = EndpointGroup("synthetic_data_jobs", prefix="/v1/jobs", tags=["Synthetic Data Jobs"])
-    headers = {
+    generations = EndpointGroup("synthetic_data_generations", tags=["Synthetic Data Generations"])
+    create_http = {
         "parameters": {
             "idempotency_key": {"in": "header", "name": "Idempotency-Key"},
         },
@@ -42,76 +44,67 @@ def build_job_group(
     }
     secured = {"security": [{"bearerAuth": []}]}
 
-    @jobs.endpoint(
-        path="",
+    @generations.endpoint(
+        path="/v1/generations",
         method="POST",
         protocols=["http"],
-        request_model=CreateJobRequest,
-        response_model=JobStatus,
-        operation_id="syntheticData.createJob",
-        summary="Create an asynchronous synthetic-data generation job",
-        http=headers,
+        request_model=CreateGenerationRequest,
+        response_model=GenerationResult,
+        operation_id="syntheticData.createGeneration",
+        summary="Synchronously generate and commit preview application data",
+        http=create_http,
     )
-    async def create_job(
-        body: CreateJobRequest,
+    async def create_generation(
+        body: CreateGenerationRequest,
         idempotency_key: str,
         request: Request,
-    ) -> JobStatus:
+        response: Response,
+    ) -> GenerationResult:
         try:
             tenant_id = await authorizer.authorize(request, action="create")
-            return service.create_job(tenant_id, idempotency_key, body)
+            outcome = service.create_generation(tenant_id, idempotency_key, body)
+            response.status_code = 200 if outcome.replayed else 201
+            return outcome.result
         except SyntheticDataError as error:
             _raise_http(error)
 
-    @jobs.endpoint(
-        path="/{job_id}",
+    @generations.endpoint(
+        path="/v1/generations/{generation_id}",
         method="GET",
         protocols=["http"],
-        response_model=JobStatus,
-        operation_id="syntheticData.getJob",
-        summary="Read bounded job status and evidence",
+        response_model=GenerationResult,
+        operation_id="syntheticData.getGeneration",
+        summary="Recover committed or deleted generation metadata",
         http=secured,
     )
-    async def get_job(job_id: str, request: Request) -> JobStatus:
+    async def get_generation(generation_id: str, request: Request) -> GenerationResult:
         try:
-            tenant_id = await authorizer.authorize(request, action="read", job_id=job_id)
-            return service.status(service.get_job(tenant_id, job_id))
+            tenant_id = await authorizer.authorize(
+                request, action="read", generation_id=generation_id
+            )
+            return service.get_generation(tenant_id, generation_id)
         except SyntheticDataError as error:
             _raise_http(error)
 
-    @jobs.endpoint(
-        path="/{job_id}:cancel",
-        method="POST",
+    @generations.endpoint(
+        path="/v1/generations/{generation_id}",
+        method="DELETE",
         protocols=["http"],
-        response_model=JobStatus,
-        operation_id="syntheticData.cancelJob",
-        summary="Request best-effort job cancellation",
+        response_model=GenerationResult,
+        operation_id="syntheticData.deleteGeneration",
+        summary="Delete exactly the application rows written by a generation",
         http=secured,
     )
-    async def cancel_job(job_id: str, request: Request) -> JobStatus:
+    async def delete_generation(generation_id: str, request: Request) -> GenerationResult:
         try:
-            tenant_id = await authorizer.authorize(request, action="cancel", job_id=job_id)
-            return service.cancel(tenant_id, job_id)
+            tenant_id = await authorizer.authorize(
+                request, action="delete", generation_id=generation_id
+            )
+            return service.delete_generation(tenant_id, generation_id)
         except SyntheticDataError as error:
             _raise_http(error)
 
-    @jobs.endpoint(
-        path="/{job_id}/result",
-        method="GET",
-        protocols=["http"],
-        response_model=JobResult,
-        operation_id="syntheticData.getJobResult",
-        summary="Read the exact immutable dataset Artifact result",
-        http=secured,
-    )
-    async def get_job_result(job_id: str, request: Request) -> JobResult:
-        try:
-            tenant_id = await authorizer.authorize(request, action="read", job_id=job_id)
-            return service.result(tenant_id, job_id)
-        except SyntheticDataError as error:
-            _raise_http(error)
-
-    return jobs
+    return generations
 
 
 def build_server(
@@ -129,8 +122,8 @@ def build_server(
             descriptor_version="juntai.fuse/v1alpha1",
         )
     )
-    server = FuseServer(title="Juntai Synthetic Data Generation", version="1.2.0", profile=profile)
-    server.register(build_job_group(service, authorizer))
+    server = FuseServer(title="Juntai Synthetic Data Generation", version="1.3.0", profile=profile)
+    server.register(build_generation_group(service, authorizer))
     if enable_runtime:
         server.enable_selected_adapter()
     return server

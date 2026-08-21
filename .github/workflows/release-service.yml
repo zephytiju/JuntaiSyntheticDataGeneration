@@ -3,7 +3,7 @@ name: Release immutable Synthetic service and KES migrations
 on:
   push:
     branches: ["main"]
-    paths: ["release-evidence/synthetic-data-v1.2.0.json"]
+    paths: ["release-evidence/synthetic-data-v1.3.0.json"]
 
 permissions:
   contents: write
@@ -16,10 +16,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       IMAGE: ghcr.io/zephytiju/juntai-synthetic-data-generation
-      RELEASE_TAG: synthetic-data-v1.2.0
-      DOCUMENTATION_TAG: synthetic-data-docs-v1.2.0
-      VERSION: 1.2.0
-      REAL_KES_EVIDENCE: release-evidence/synthetic-data-v1.2.0.json
+      RELEASE_TAG: synthetic-data-v1.3.0
+      DOCUMENTATION_TAG: synthetic-data-docs-v1.3.0
+      VERSION: 1.3.0
+      REAL_KES_EVIDENCE: release-evidence/synthetic-data-v1.3.0.json
     steps:
       - uses: actions/checkout@v5
         with:
@@ -57,10 +57,9 @@ jobs:
           ruff check .
           ruff format --check .
           python scripts/generate_openapi.py
-          python scripts/generate_worker_protocol.py
           python scripts/generate_fixture.py
           python scripts/generate_documentation_contracts.py
-          git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
+          git diff --exit-code -- openapi fixtures documentation/contracts
           pytest -q
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python -m build --wheel
@@ -69,7 +68,7 @@ jobs:
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python scripts/generate_service_release.py \
             --out dist/release-assets \
-            --wheel dist/juntai_synthetic_data_generation-1.2.0-py3-none-any.whl \
+            --wheel dist/juntai_synthetic_data_generation-1.3.0-py3-none-any.whl \
             --real-kes-evidence /tmp/real-kes-acceptance.json \
             --repository "$GITHUB_REPOSITORY" \
             --source-revision "$RELEASE_SHA" \
@@ -104,10 +103,10 @@ jobs:
             fi
           }
 
-          ensure_tag "$RELEASE_TAG" "Synthetic Data 1.2.0 immutable release
+          ensure_tag "$RELEASE_TAG" "Synthetic Data 1.3.0 immutable release
 
           REAL_KES_EVIDENCE_BASE64=$evidence_base64"
-          ensure_tag "$DOCUMENTATION_TAG" "Synthetic Data documentation capability 1.2.0"
+          ensure_tag "$DOCUMENTATION_TAG" "Synthetic Data documentation capability 1.3.0"
           service_message="$(git for-each-ref --format='%(contents)' "refs/release-tags/$RELEASE_TAG")"
           printf '%s\n' "$service_message" | grep -Fqx \
             "REAL_KES_EVIDENCE_BASE64=$evidence_base64"
@@ -121,8 +120,8 @@ jobs:
             gh release create "$RELEASE_TAG" \
               dist/release-assets/* \
               --verify-tag \
-              --title "Synthetic Data service, SWP/v1, and KES migrations 1.2.0" \
-              --notes "Service-owned SWP/v1 worker isolation, bearer-IAM OpenAPI/MCP contracts, forward-only job-metadata KES migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior synthetic-data-v1.1.0 and synthetic-data-docs-v1.0.0 releases remain unchanged."
+              --title "Synthetic Data synchronous service and KES migrations 1.3.0" \
+              --notes "Test-fleet synchronous application-data generation, exact IAM 1.1 tuple, forward-only service metadata migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior Synthetic tags and releases remain unchanged."
           fi
       - name: Verify immutable release
         env:

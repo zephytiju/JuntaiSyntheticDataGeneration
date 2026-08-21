@@ -45,7 +45,14 @@ def main() -> int:
         raise SystemExit("static catalog selection changed the exact bundle pin")
     if loaded["tools"] or loaded["prompts"]:
         raise SystemExit("HTTP-only source release must not gain MCP Tools or Prompts")
-    if len(loaded["resources"]) != len(loaded["units"]):
+    content_graph = json.loads((build / "content-graph.json").read_text(encoding="utf-8"))
+    agent_unit_ids = {
+        unit["unitId"] for unit in content_graph["units"] if "agent" in unit["audiences"]
+    }
+    resource_unit_ids = {
+        unit_id for resource in loaded["resources"] for unit_id in resource["unitIds"]
+    }
+    if resource_unit_ids != agent_unit_ids:
         raise SystemExit("every reviewed agent unit must project to one MCP Resource")
     if not loaded["safetyPolicyUnitIds"]:
         raise SystemExit("publication lost required safety and policy units")

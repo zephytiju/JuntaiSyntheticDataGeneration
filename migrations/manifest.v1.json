@@ -2,7 +2,7 @@
   "schemaVersion": "juntai.synthetic-data.migration-set/v1",
   "service": {
     "name": "synthetic-data-generation",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "database": {
     "product": "KingbaseES",
@@ -44,6 +44,13 @@
       "sha256": "3e1938165b6ff0bcc9dcfc80288e74f32715474e259f82b346307724c0809779",
       "transactional": true,
       "upgradeFromRelease": "1.1.0"
+    },
+    {
+      "id": "0003_synchronous_generations",
+      "path": "0003_synchronous_generations.sql",
+      "sha256": "87c1133e49344322b92a885fc9c44089d0cadd1e0cce14f5b7170c6093370b11",
+      "transactional": true,
+      "upgradeFromRelease": "1.2.0"
     }
   ]
 }

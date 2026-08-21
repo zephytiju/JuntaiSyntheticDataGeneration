@@ -1,25 +1,23 @@
-"""Generic asynchronous synthetic-data generation foundation."""
+"""Synchronous test-fleet synthetic application-data generation service."""
 
 from .contracts.models import (
     CONTRACT_VERSION,
     REQUEST_VERSION,
-    CreateJobRequest,
+    CreateGenerationRequest,
     GenerationContract,
-    JobResult,
-    JobStatus,
+    GenerationResult,
+    GenerationState,
 )
-from .jobs.models import JobState
 from .service import SyntheticDataService
 
 __all__ = [
     "CONTRACT_VERSION",
     "REQUEST_VERSION",
-    "CreateJobRequest",
+    "CreateGenerationRequest",
     "GenerationContract",
-    "JobResult",
-    "JobState",
-    "JobStatus",
+    "GenerationResult",
+    "GenerationState",
     "SyntheticDataService",
 ]
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"

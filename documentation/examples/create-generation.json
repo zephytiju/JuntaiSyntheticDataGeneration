@@ -1,0 +1,34 @@
+{
+  "expectedOutcome": {"state": "COMMITTED", "status": 201},
+  "expectedToolCalls": [],
+  "input": {
+    "body": {
+      "generation_contract": {
+        "bounds": {"max_bytes": 1048576, "max_records": 3},
+        "records": [{
+          "count": 3,
+          "destination": {
+            "columns": {"record_id": "record_id", "score": "score"},
+            "key_fields": ["record_id"],
+            "schema": "preview_core",
+            "table": "entity"
+          },
+          "fields": {
+            "record_id": {"distribution": {"kind": "uuid"}, "type": "string", "unique": true},
+            "score": {"distribution": {"kind": "uniform", "maximum": 1, "minimum": 0}, "type": "number"}
+          },
+          "record_type": "entity"
+        }]
+      },
+      "policy": {"data_classification": "synthetic"},
+      "provider": {"class": "tabular", "requirements": {"deterministic": true}},
+      "seed": "documentation-example-v1"
+    },
+    "headers": {
+      "Authorization": "Bearer <access-token-aud-juntai.synthetic-data.api>",
+      "Idempotency-Key": "documentation-example-create-v1"
+    },
+    "method": "POST",
+    "path": "/v1/generations"
+  }
+}
