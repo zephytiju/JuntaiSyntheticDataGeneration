@@ -27,6 +27,26 @@ KES_IMAGE = (
 )
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+EXPECTED_KES_CHECKS = [
+    "concurrency-lock",
+    "cross-schema-atomic-write",
+    "database-destination-rejection",
+    "database-restart",
+    "delete-idempotence",
+    "destination-conflict-rollback",
+    "empty-database",
+    "exact-key-delete",
+    "idempotent-replay",
+    "ledger-current",
+    "lost-response-recovery",
+    "no-platform-database-dependency",
+    "quoted-caller-destination",
+    "released-1.2.0-baseline-upgrade",
+    "repeat-idempotence",
+    "tenant-rls-isolation",
+    "transactional-failure-recovery",
+    "transactional-partial-failure",
+]
 
 
 def _canonical(value: object) -> bytes:
@@ -95,6 +115,14 @@ def _validate(args: argparse.Namespace, evidence: dict[str, Any]) -> None:
         raise SystemExit("real-KES evidence image differs from release image")
     if evidence.get("kingbaseImage") != KES_IMAGE:
         raise SystemExit("real-KES evidence used an unexpected KingbaseES image")
+    if evidence.get("kingbaseVersion") != "KingbaseES V009R001C010":
+        raise SystemExit("real-KES evidence used an unexpected KingbaseES version")
+    if evidence.get("serviceVersion") != VERSION:
+        raise SystemExit("real-KES evidence used an unexpected service version")
+    if evidence.get("schemaVersion") != "juntai.synthetic-data.real-kes-acceptance-result/v1":
+        raise SystemExit("real-KES evidence used an unexpected evidence schema")
+    if evidence.get("checks") != EXPECTED_KES_CHECKS:
+        raise SystemExit("real-KES evidence did not pass the exact reviewed check matrix")
     if evidence.get("migrationIds") != [
         "0001_jobs",
         "0002_worker_protocol",
@@ -183,6 +211,10 @@ def main() -> int:
             "asset": "real-kes-acceptance.json",
             "sha256": _digest(output / "real-kes-acceptance.json"),
             "result": "passed",
+            "executionContext": "independent-licensed-kes",
+            "githubHosted": False,
+            "completedAt": evidence["completedAt"],
+            "checks": evidence["checks"],
         },
     }
     _write(output / "migration-release-manifest.json", migration_release)
@@ -272,6 +304,8 @@ def main() -> int:
                     "releaseTag": RELEASE_TAG,
                     "image": image_reference,
                     "realKesEvidenceSha256": _digest(output / "real-kes-acceptance.json"),
+                    "realKesEvidenceExecutionContext": "independent-licensed-kes",
+                    "realKesEvidenceRanOnGitHubHosted": False,
                 },
                 "internalParameters": {},
                 "resolvedDependencies": [
