@@ -40,7 +40,13 @@ jobs:
           git fetch origin main
           git merge-base --is-ancestor "$release_sha" origin/main
           echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
+          echo "DOCUMENTATION_SHA=$GITHUB_SHA" >> "$GITHUB_ENV"
           cp "$REAL_KES_EVIDENCE" /tmp/real-kes-acceptance.json
+          mkdir -p /tmp/source-bound-documentation-contracts
+          cp documentation/contracts/openapi.json \
+            /tmp/source-bound-documentation-contracts/openapi.json
+          cp documentation/contracts/mcp-descriptor.json \
+            /tmp/source-bound-documentation-contracts/mcp-descriptor.json
           git checkout --detach "$release_sha"
           test "$(git rev-parse HEAD)" = "$release_sha"
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "$VERSION"
@@ -58,14 +64,20 @@ jobs:
           ruff format --check .
           python scripts/generate_openapi.py
           python scripts/generate_fixture.py
-          python scripts/generate_documentation_contracts.py
-          git diff --exit-code -- openapi fixtures documentation/contracts
+          git diff --exit-code -- openapi fixtures
+          cmp openapi/synthetic-data-generation.v1.json \
+            /tmp/source-bound-documentation-contracts/openapi.json
+          python -c 'import json,os; d=json.load(open("/tmp/source-bound-documentation-contracts/mcp-descriptor.json")); assert d["buildId"] == os.environ["RELEASE_SHA"]; assert d["sourceCommit"] == os.environ["RELEASE_SHA"]'
           pytest -q
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python -m build --wheel
       - name: Compose exact release assets
         run: |
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
+          cp /tmp/source-bound-documentation-contracts/openapi.json \
+            documentation/contracts/openapi.json
+          cp /tmp/source-bound-documentation-contracts/mcp-descriptor.json \
+            documentation/contracts/mcp-descriptor.json
           python scripts/generate_service_release.py \
             --out dist/release-assets \
             --wheel dist/juntai_synthetic_data_generation-1.3.0-py3-none-any.whl \
@@ -91,13 +103,14 @@ jobs:
           ensure_tag() {
             tag="$1"
             title="$2"
+            target="$3"
             release_ref="refs/release-tags/$tag"
             if test -n "$(git ls-remote --tags origin "refs/tags/$tag")"; then
               git fetch --force origin "refs/tags/$tag:$release_ref"
               test "$(git cat-file -t "$release_ref")" = tag
-              test "$(git rev-list -n 1 "$release_ref")" = "$RELEASE_SHA"
+              test "$(git rev-list -n 1 "$release_ref")" = "$target"
             else
-              git tag -a "$tag" "$RELEASE_SHA" -m "$title"
+              git tag -a "$tag" "$target" -m "$title"
               git push origin "refs/tags/$tag"
               git update-ref "$release_ref" "refs/tags/$tag"
             fi
@@ -105,8 +118,9 @@ jobs:
 
           ensure_tag "$RELEASE_TAG" "Synthetic Data 1.3.0 immutable release
 
-          REAL_KES_EVIDENCE_BASE64=$evidence_base64"
-          ensure_tag "$DOCUMENTATION_TAG" "Synthetic Data documentation capability 1.3.0"
+          REAL_KES_EVIDENCE_BASE64=$evidence_base64" "$RELEASE_SHA"
+          ensure_tag "$DOCUMENTATION_TAG" \
+            "Synthetic Data documentation capability 1.3.0" "$DOCUMENTATION_SHA"
           service_message="$(git for-each-ref --format='%(contents)' "refs/release-tags/$RELEASE_TAG")"
           printf '%s\n' "$service_message" | grep -Fqx \
             "REAL_KES_EVIDENCE_BASE64=$evidence_base64"

@@ -85,14 +85,3 @@ jobs:
             documentation/contracts/
           if-no-files-found: error
           retention-days: 90
-
-  licensed-acceptance:
-    needs: publish
-    permissions:
-      contents: read
-      packages: read
-    uses: ./.github/workflows/acceptance.yml
-    with:
-      source_revision: ${{ github.sha }}
-      image_digest: ${{ needs.publish.outputs.image_digest }}
-    secrets: inherit

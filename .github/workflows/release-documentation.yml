@@ -21,7 +21,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     env:
-      DOCUMENTED_SOURCE_COMMIT: 0000000000000000000000000000000000000000
+      DOCUMENTED_SOURCE_COMMIT: 54ea4f8c28337714564de40f19a4f3c9124e9d20
       DOCUMENTATION_WHEEL: /tmp/juntai_documentation_capability-1.0.0-py3-none-any.whl
       DOCUMENTATION_WHEEL_SHA256: 82995a96601f8249ca85bfd51cfb5fe34c3a2d8608ff7b0d42c5004a59843c33
       RELEASE_TAG: synthetic-data-docs-v1.3.0

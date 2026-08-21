@@ -8,6 +8,7 @@ import yaml
 
 ROOT = Path(__file__).parents[2]
 DOCUMENTATION = ROOT / "documentation"
+DOCUMENTED_SOURCE_COMMIT = "54ea4f8c28337714564de40f19a4f3c9124e9d20"
 
 
 def _digest(path: Path) -> str:
@@ -16,7 +17,7 @@ def _digest(path: Path) -> str:
 
 def test_documentation_contracts_pin_exact_source_release() -> None:
     manifest = yaml.safe_load((DOCUMENTATION / "manifest.yaml").read_text())
-    assert len(manifest["metadata"]["producerBuildId"]) == 40
+    assert manifest["metadata"]["producerBuildId"] == DOCUMENTED_SOURCE_COMMIT
     assert manifest["provenance"]["sourceCommit"] == manifest["metadata"]["producerBuildId"]
     openapi = manifest["contracts"]["openapi"]
     descriptor = manifest["contracts"]["mcp"]

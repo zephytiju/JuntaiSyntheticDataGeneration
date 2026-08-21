@@ -9,6 +9,9 @@ SQL_DIGEST = "af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822"
 SWP_SQL_DIGEST = "3e1938165b6ff0bcc9dcfc80288e74f32715474e259f82b346307724c0809779"
 SYNCHRONOUS_SQL_DIGEST = "87c1133e49344322b92a885fc9c44089d0cadd1e0cce14f5b7170c6093370b11"
 KES_DIGEST = "0bce318e74adca7a3d619b55b336269017507fd679833b7ce5d8400289661724"
+RELEASE_SOURCE = "54ea4f8c28337714564de40f19a4f3c9124e9d20"
+RELEASE_IMAGE = "e6a4c903d3fdc5f4eb315a2a50fe3e1af6f4febeb3d696a4cd900c9887921912"
+RELEASE_KES_EVIDENCE = "c9042a441f4c86796ca661ba82c55c4e94f9fc7f8de032e781223584b62f07c9"
 
 
 def test_migration_set_is_exact_ordered_and_service_owned() -> None:
@@ -70,6 +73,27 @@ def test_main_publication_never_retags_the_documented_1_0_0_image() -> None:
     assert "sbom: true" in publication
 
 
+def test_publication_has_no_self_hosted_or_fake_hosted_kes_gate() -> None:
+    workflows = "\n".join(path.read_text() for path in (ROOT / ".github/workflows").glob("*.yml"))
+
+    assert "self-hosted" not in workflows
+    assert "juntai-platform" not in workflows
+    assert "licensed-acceptance" not in workflows
+    assert not (ROOT / ".github/workflows/acceptance.yml").exists()
+
+
+def test_exact_independent_release_kes_evidence_is_committed() -> None:
+    path = ROOT / "release-evidence/synthetic-data-v1.3.0.json"
+    evidence = json.loads(path.read_text())
+
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == RELEASE_KES_EVIDENCE
+    assert evidence["result"] == "passed"
+    assert evidence["sourceRevision"] == RELEASE_SOURCE
+    assert evidence["serviceImageDigest"] == f"sha256:{RELEASE_IMAGE}"
+    assert evidence["kingbaseVersion"] == "KingbaseES V009R001C010"
+    assert len(evidence["checks"]) == 18
+
+
 def test_service_release_requires_real_kes_evidence_and_attestation() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release-service.yml").read_text()
 
@@ -79,7 +103,8 @@ def test_service_release_requires_real_kes_evidence_and_attestation() -> None:
         "Create or verify exact annotated release tags"
     )
     assert 'test "$(git cat-file -t "$release_ref")" = tag' in workflow
-    assert 'test "$(git rev-list -n 1 "$release_ref")" = "$RELEASE_SHA"' in workflow
+    assert 'test "$(git rev-list -n 1 "$release_ref")" = "$target"' in workflow
+    assert '"Synthetic Data documentation capability 1.3.0" "$DOCUMENTATION_SHA"' in workflow
     assert "actions/attest-build-provenance@v3" in workflow
     assert "generate_service_release.py" in workflow
     assert "isImmutable" in workflow
@@ -91,4 +116,6 @@ def test_release_handoff_pins_exact_test_fleet_admission() -> None:
     assert '"requiredValue": "true"' in generator
     assert '"comparison": "exact"' in generator
     assert '"databaseDsnFileEnvironment": "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE"' in generator
+    assert '"executionContext": "independent-licensed-kes"' in generator
+    assert '"githubHosted": False' in generator
     assert "JUNTAI_SYNTHETIC_DATA_DESTINATION_ALLOWLIST_FILE" not in generator
