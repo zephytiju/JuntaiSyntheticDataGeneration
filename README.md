@@ -34,10 +34,11 @@ Tenant identity comes only from verified IAM context; Synthetic metadata is prot
 published IAM tuple is `juntai-iam==1.1.0` and `juntai-iam-contracts==1.1.1`; the service verifies the
 contracts manifest and imports, rather than recreates, IAM semantics.
 
-Authenticated internal callers are the sole source of logical destination names. The exact
-deployment-facing test-fleet admission marker is intentionally not declared here until fixed by the
-canonical release contract. The service release must remain unpublished and fail closed until that
-marker is approved and the production `serve` binding is enabled.
+Authenticated internal callers are the sole source of logical destination names. Deployment must
+set `JUNTAI_SYNTHETIC_DATA_TEST_FLEET=true`. The `serve` entry point compares this binding literally
+and rejects a missing value or any value other than exact lowercase `true` before constructing the
+application-database connector or service. Generic `JUNTAI_ENVIRONMENT` metadata does not satisfy
+this admission check.
 
 ## Verification
 

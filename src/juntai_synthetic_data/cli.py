@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import sys
+
+TEST_FLEET_ENV = "JUNTAI_SYNTHETIC_DATA_TEST_FLEET"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -64,10 +68,33 @@ def main() -> int | None:
 
 
 def _run_server() -> None:
-    raise RuntimeError(
-        "serve binding is intentionally disabled until the exact test-fleet admission marker is "
-        "approved"
+    if os.getenv(TEST_FLEET_ENV) != "true":
+        raise RuntimeError(f"{TEST_FLEET_ENV} must be exactly lowercase true")
+
+    from juntai_synthetic_data.api import build_server
+    from juntai_synthetic_data.api.openapi import IAM_AUDIENCE
+    from juntai_synthetic_data.migration import read_dsn_file
+    from juntai_synthetic_data.runtime import build_runtime_service, psycopg_connector
+    from juntai_synthetic_data.runtime_auth import build_runtime_authorizer
+
+    dsn = read_dsn_file()
+    configured_audience = os.getenv("JUNTAI_IAM_AUDIENCE", IAM_AUDIENCE)
+    if configured_audience != IAM_AUDIENCE:
+        raise RuntimeError(f"JUNTAI_IAM_AUDIENCE must be exactly {IAM_AUDIENCE}")
+    authorizer = build_runtime_authorizer(
+        issuer=os.environ["JUNTAI_IAM_ISSUER"],
+        audiences=(IAM_AUDIENCE,),
+        policy_snapshot_path=os.environ["JUNTAI_IAM_POLICY_SNAPSHOT"],
+        discovery_url=os.getenv("JUNTAI_IAM_DISCOVERY_URL"),
     )
+    service = build_runtime_service(
+        connector=psycopg_connector(dsn),
+        test_fleet=True,
+        service_image_digest=os.getenv("JUNTAI_SERVICE_IMAGE_DIGEST"),
+        otlp_endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
+    )
+    server = build_server(service, authorizer=authorizer)
+    asyncio.run(server.serve(host=os.getenv("HOST", "0.0.0.0")))
 
 
 if __name__ == "__main__":

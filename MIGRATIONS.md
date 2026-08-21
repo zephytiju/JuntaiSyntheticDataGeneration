@@ -16,6 +16,16 @@ export JUNTAI_SERVICE_IMAGE_DIGEST=sha256:<64-hex-released-image-digest>
 juntai-synthetic-data migrate
 ```
 
+The API runtime uses the same DSN secret and additionally requires the exact admission binding:
+
+```bash
+export JUNTAI_SYNTHETIC_DATA_TEST_FLEET=true
+juntai-synthetic-data serve
+```
+
+Missing, differently cased, padded, or otherwise different marker values are rejected before the
+DSN secret is read or the service is constructed. `JUNTAI_ENVIRONMENT` is not an admission input.
+
 The command verifies the ordered manifest and SQL checksums before connecting, requires KingbaseES
 V009R001C010, takes a transaction-scoped advisory lock, and records migration IDs, checksums, source
 revision, service version, and image digest in `juntai_synthetic_data.schema_migrations`.

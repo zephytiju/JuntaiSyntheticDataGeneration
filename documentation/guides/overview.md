@@ -10,6 +10,10 @@ one process. It does not use a worker, queue, dispatcher, executor, Kafka, Artif
 Platform runtime. Platform infrastructure may deploy the immutable service image and supply its
 application-database binding, but it does not implement Synthetic behavior.
 
+The deployment must set `JUNTAI_SYNTHETIC_DATA_TEST_FLEET=true`. The service rejects missing or
+non-exact values before constructing its database connector or runtime. `JUNTAI_ENVIRONMENT` is not
+an admission substitute.
+
 Every request names logical schema, table, generated-field-to-column mappings, and key fields.
 Database addresses, credentials, raw SQL, and tenant authority are never accepted in the API.
 All requested application rows and the service's generation metadata/key ledger commit in one

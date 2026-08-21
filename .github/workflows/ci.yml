@@ -69,6 +69,34 @@ jobs:
           docker run --rm --network none \
             juntai-synthetic-data-generation:ci --help > /tmp/commands.txt
           grep -q '{serve,migrate}' /tmp/commands.txt
+          if docker run --rm --network none \
+            juntai-synthetic-data-generation:ci serve > /tmp/admission-missing.txt 2>&1; then
+            exit 1
+          fi
+          grep -Fq 'JUNTAI_SYNTHETIC_DATA_TEST_FLEET must be exactly lowercase true' \
+            /tmp/admission-missing.txt
+          for value in TRUE True 1 ' true' 'true '; do
+            if docker run --rm --network none \
+              -e JUNTAI_SYNTHETIC_DATA_TEST_FLEET="$value" \
+              juntai-synthetic-data-generation:ci serve > /tmp/admission-invalid.txt 2>&1; then
+              exit 1
+            fi
+            grep -Fq 'JUNTAI_SYNTHETIC_DATA_TEST_FLEET must be exactly lowercase true' \
+              /tmp/admission-invalid.txt
+          done
+          if docker run --rm --network none \
+            -e JUNTAI_ENVIRONMENT=development \
+            juntai-synthetic-data-generation:ci serve > /tmp/admission-generic.txt 2>&1; then
+            exit 1
+          fi
+          grep -Fq 'JUNTAI_SYNTHETIC_DATA_TEST_FLEET must be exactly lowercase true' \
+            /tmp/admission-generic.txt
+          if docker run --rm --network none \
+            -e JUNTAI_SYNTHETIC_DATA_TEST_FLEET=true \
+            juntai-synthetic-data-generation:ci serve > /tmp/admission-exact.txt 2>&1; then
+            exit 1
+          fi
+          grep -Fq 'JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE is required' /tmp/admission-exact.txt
 
   documentation:
     name: Documentation capability

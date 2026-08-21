@@ -83,3 +83,12 @@ def test_service_release_requires_real_kes_evidence_and_attestation() -> None:
     assert "actions/attest-build-provenance@v3" in workflow
     assert "generate_service_release.py" in workflow
     assert "isImmutable" in workflow
+
+
+def test_release_handoff_pins_exact_test_fleet_admission() -> None:
+    generator = (ROOT / "scripts" / "generate_service_release.py").read_text()
+    assert '"environmentVariable": "JUNTAI_SYNTHETIC_DATA_TEST_FLEET"' in generator
+    assert '"requiredValue": "true"' in generator
+    assert '"comparison": "exact"' in generator
+    assert '"databaseDsnFileEnvironment": "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE"' in generator
+    assert "JUNTAI_SYNTHETIC_DATA_DESTINATION_ALLOWLIST_FILE" not in generator

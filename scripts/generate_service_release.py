@@ -197,6 +197,16 @@ def main() -> int:
         "image": image_reference,
         "imageSbom": "OCI BuildKit SBOM attached to the image index",
         "imageProvenance": "GitHub artifact attestation and OCI BuildKit provenance",
+        "runtimeBinding": {
+            "argv": ["juntai-synthetic-data", "serve"],
+            "testFleetAdmission": {
+                "environmentVariable": "JUNTAI_SYNTHETIC_DATA_TEST_FLEET",
+                "requiredValue": "true",
+                "comparison": "exact",
+            },
+            "databaseDsnFileEnvironment": "JUNTAI_SYNTHETIC_DATA_KES_DSN_FILE",
+            "iamAudience": "juntai.synthetic-data.api",
+        },
         "documentationOpenapiSha256": _digest(output / "documentation.openapi.v1.json"),
         "documentationMcpSha256": _digest(output / "documentation.mcp-descriptor.v1.json"),
         "migrationManifest": {

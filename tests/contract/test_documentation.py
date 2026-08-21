@@ -76,6 +76,8 @@ def test_documentation_contains_no_withdrawn_runtime_semantics() -> None:
         assert excluded not in authored
     assert "single application" in authored
     assert "logical destination" in authored
+    assert "juntai_synthetic_data_test_fleet=true" in authored
+    assert "juntai_environment" in authored
 
 
 def test_destination_authority_has_no_service_policy_or_catalog_preflight() -> None:

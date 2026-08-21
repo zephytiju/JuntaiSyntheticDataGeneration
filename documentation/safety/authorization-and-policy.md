@@ -10,6 +10,9 @@ verifies the contract manifest before constructing authorization. It does not re
 peer-principal, delegation, or policy semantics.
 
 Only `synthetic` and `internal` classifications are accepted. The service is test-fleet-only and
-must not be admitted to a production application fleet. Authenticated internal callers are
-authoritative for logical destinations; normal database grants and RLS still apply when KingbaseES
-executes the transaction. Synthetic maintains no separate destination policy.
+must not be admitted to a production application fleet. Process admission requires the exact
+deployment binding `JUNTAI_SYNTHETIC_DATA_TEST_FLEET=true`; missing, differently cased, padded, or
+otherwise different values fail before database/service construction. `JUNTAI_ENVIRONMENT` does not
+grant admission. Authenticated internal callers are authoritative for logical destinations; normal
+database grants and RLS still apply when KingbaseES executes the transaction. Synthetic maintains no
+separate destination policy.
