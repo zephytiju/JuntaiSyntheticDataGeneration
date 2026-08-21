@@ -196,16 +196,17 @@ def test_tenant_identity_scopes_rows_metadata_and_idempotency() -> None:
     assert captured.value.code is ErrorCode.GENERATION_NOT_FOUND
 
 
-def test_forbidden_destination_fails_before_generation() -> None:
+def test_database_rejects_unknown_requester_destination_atomically() -> None:
     repository = make_repository()
     data = copy.deepcopy(request_data())
     data["generation_contract"]["records"][0]["destination"]["schema"] = "platform"
     request = CreateGenerationRequest.model_validate(data)
 
     with pytest.raises(SyntheticDataError) as captured:
-        make_service(repository=repository).create_generation("tenant-a", "forbidden", request)
+        make_service(repository=repository).create_generation("tenant-a", "unknown", request)
 
-    assert captured.value.code is ErrorCode.DESTINATION_FORBIDDEN
+    assert captured.value.code is ErrorCode.DESTINATION_INVALID
+    assert repository.table_rows("tenant-a", "axiom_preview", "site") == ()
     assert repository.table_rows("tenant-a", "lattice_preview", "asset") == ()
 
 

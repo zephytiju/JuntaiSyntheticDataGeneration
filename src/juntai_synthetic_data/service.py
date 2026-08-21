@@ -68,7 +68,6 @@ class SyntheticDataService:
             return CommitOutcome(existing, True)
         decision = self.policy.evaluate(request)
         provider = self.providers.select(request)
-        self.repository.validate_destinations(tenant_id, request.generation_contract)
         started = self.monotonic()
         dataset = provider.generate(request.generation_contract, request.seed)
         if self.monotonic() - started > request.provider.requirements.maximum_runtime_seconds:

@@ -7,7 +7,6 @@ import pytest
 from conftest import catalog, make_repository, make_service, request_data
 
 from juntai_synthetic_data.contracts.models import CreateGenerationRequest, FieldType
-from juntai_synthetic_data.destinations import ALLOWLIST_VERSION, DestinationAllowlist
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.persistence import InMemoryGenerationRepository, TableDefinition
 
@@ -52,7 +51,7 @@ def test_written_key_ledger_is_canonical_and_bounded() -> None:
     assert max(map(len, keys)) < 8192
 
 
-def test_non_unique_destination_key_is_rejected_before_generation() -> None:
+def test_caller_declared_non_unique_key_is_not_preflighted() -> None:
     definitions = catalog()
     definitions[("axiom_preview", "site")] = TableDefinition(
         columns={"site_id": FieldType.STRING, "display_name": FieldType.STRING},
@@ -61,12 +60,11 @@ def test_non_unique_destination_key_is_rejected_before_generation() -> None:
     )
     repository = InMemoryGenerationRepository(definitions)
 
-    with pytest.raises(SyntheticDataError) as captured:
-        make_service(repository=repository).create_generation(
-            "tenant-a", "invalid-key", CreateGenerationRequest.model_validate(request_data())
-        )
+    outcome = make_service(repository=repository).create_generation(
+        "tenant-a", "caller-key", CreateGenerationRequest.model_validate(request_data())
+    )
 
-    assert captured.value.code is ErrorCode.DESTINATION_INVALID
+    assert outcome.result.record_count == 9
 
 
 def test_missing_generated_row_causes_atomic_delete_conflict() -> None:
@@ -86,25 +84,19 @@ def test_missing_generated_row_causes_atomic_delete_conflict() -> None:
     assert len(repository.table_rows("tenant-a", "lattice_preview", "asset")) == 5
 
 
-def test_allowlist_file_is_exact_and_rejects_unknown_shape(tmp_path) -> None:
-    path = tmp_path / "destinations.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schemaVersion": ALLOWLIST_VERSION,
-                "destinations": [
-                    {"schema": "axiom_preview", "tables": ["site"]},
-                    {"schema": "lattice_preview", "tables": ["asset"]},
-                ],
-            }
-        )
-    )
-    allowlist = DestinationAllowlist.from_file(str(path))
-    assert allowlist.allows("axiom_preview", "site")
-    assert not allowlist.allows("platform", "anything")
+def test_duplicate_caller_key_causes_atomic_delete_conflict() -> None:
+    repository = make_repository()
+    service = make_service(repository=repository)
+    created = service.create_generation(
+        "tenant-a", "duplicate-key", CreateGenerationRequest.model_validate(request_data())
+    ).result
+    sites = list(repository.table_rows("tenant-a", "axiom_preview", "site"))
+    sites.append(dict(sites[0]))
+    repository.seed_rows("tenant-a", "axiom_preview", "site", tuple(sites))
 
-    path.write_text(
-        json.dumps({"schemaVersion": ALLOWLIST_VERSION, "destinations": [], "dsn": "x"})
-    )
-    with pytest.raises(ValueError, match="top-level"):
-        DestinationAllowlist.from_file(str(path))
+    with pytest.raises(SyntheticDataError) as captured:
+        service.delete_generation("tenant-a", created.generation_id)
+
+    assert captured.value.code is ErrorCode.DELETE_CONFLICT
+    assert len(repository.table_rows("tenant-a", "axiom_preview", "site")) == 4
+    assert len(repository.table_rows("tenant-a", "lattice_preview", "asset")) == 6

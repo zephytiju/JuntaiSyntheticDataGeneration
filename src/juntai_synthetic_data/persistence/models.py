@@ -7,7 +7,6 @@ from typing import Protocol
 
 from juntai_synthetic_data.contracts.models import (
     CreateGenerationRequest,
-    GenerationContract,
     GenerationResult,
 )
 from juntai_synthetic_data.dataset import GeneratedDataset
@@ -31,8 +30,6 @@ class CommitOutcome:
 
 class GenerationRepository(Protocol):
     def find_idempotent(self, tenant_id: str, idempotency_key: str) -> GenerationResult | None: ...
-
-    def validate_destinations(self, tenant_id: str, contract: GenerationContract) -> None: ...
 
     def commit(
         self,

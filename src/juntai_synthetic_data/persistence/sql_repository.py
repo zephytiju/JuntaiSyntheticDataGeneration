@@ -15,13 +15,11 @@ from psycopg.types.json import Jsonb
 
 from juntai_synthetic_data.contracts.models import (
     DestinationResult,
-    FieldType,
-    GenerationContract,
     GenerationResult,
     GenerationState,
     ProviderView,
 )
-from juntai_synthetic_data.destinations import DestinationAllowlist, plan_destinations
+from juntai_synthetic_data.destinations import plan_destinations
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 
 from .models import CommitOutcome, GenerationWrite
@@ -34,32 +32,17 @@ _TRANSIENT = (
     psycopg.errors.DeadlockDetected,
 )
 
-_DATABASE_TYPES: dict[FieldType, frozenset[str]] = {
-    FieldType.STRING: frozenset(
-        {"character varying", "character", "text", "name", "uuid", "citext"}
-    ),
-    FieldType.INTEGER: frozenset(
-        {"smallint", "integer", "bigint", "numeric", "decimal", "int2", "int4", "int8"}
-    ),
-    FieldType.NUMBER: frozenset(
-        {
-            "smallint",
-            "integer",
-            "bigint",
-            "numeric",
-            "decimal",
-            "real",
-            "double precision",
-            "float4",
-            "float8",
-        }
-    ),
-    FieldType.BOOLEAN: frozenset({"boolean", "bool"}),
-    FieldType.DATE: frozenset({"date"}),
-    FieldType.DATETIME: frozenset(
-        {"timestamp without time zone", "timestamp with time zone", "timestamp", "timestamptz"}
-    ),
-}
+_DESTINATION_INVALID = (
+    psycopg.errors.CheckViolation,
+    psycopg.errors.DatatypeMismatch,
+    psycopg.errors.InvalidSchemaName,
+    psycopg.errors.InvalidTextRepresentation,
+    psycopg.errors.NotNullViolation,
+    psycopg.errors.NumericValueOutOfRange,
+    psycopg.errors.StringDataRightTruncation,
+    psycopg.errors.UndefinedColumn,
+    psycopg.errors.UndefinedTable,
+)
 
 
 class SqlGenerationRepository:
@@ -67,7 +50,6 @@ class SqlGenerationRepository:
         self,
         connector: Callable[[], AbstractContextManager[Any]],
         *,
-        allowlist: DestinationAllowlist,
         retry_attempts: int = 3,
         retry_base_seconds: float = 0.05,
         retry_cap_seconds: float = 1.0,
@@ -79,7 +61,6 @@ class SqlGenerationRepository:
         if retry_base_seconds < 0 or retry_cap_seconds < retry_base_seconds:
             raise ValueError("invalid retry timing")
         self.connector = connector
-        self.allowlist = allowlist
         self.retry_attempts = retry_attempts
         self.retry_base_seconds = retry_base_seconds
         self.retry_cap_seconds = retry_cap_seconds
@@ -185,221 +166,6 @@ class SqlGenerationRepository:
 
         return self._retry(operation)
 
-    @staticmethod
-    def _catalog_columns(cursor: Any, schema: str, table: str) -> dict[str, tuple[Any, ...]]:
-        cursor.execute(
-            """
-            SELECT column_name, data_type, udt_name, is_nullable, column_default,
-                   is_identity, is_generated
-              FROM information_schema.columns
-             WHERE table_schema = %s AND table_name = %s
-             ORDER BY ordinal_position
-            """,
-            (schema, table),
-        )
-        return {str(row[0]): tuple(row[1:]) for row in cursor.fetchall()}
-
-    @staticmethod
-    def _unique_keys(cursor: Any, schema: str, table: str) -> set[frozenset[str]]:
-        cursor.execute(
-            """
-            SELECT array_agg(attribute.attname ORDER BY position.ordinality)
-              FROM pg_class AS relation
-              JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-              JOIN pg_index AS index_def ON index_def.indrelid = relation.oid
-              JOIN LATERAL unnest(index_def.indkey)
-                   WITH ORDINALITY AS position(attnum, ordinality) ON true
-              JOIN pg_attribute AS attribute
-                ON attribute.attrelid = relation.oid
-               AND attribute.attnum = position.attnum
-             WHERE namespace.nspname = %s
-               AND relation.relname = %s
-               AND index_def.indisunique
-               AND index_def.indpred IS NULL
-             GROUP BY index_def.indexrelid
-            """,
-            (schema, table),
-        )
-        return {frozenset(str(item) for item in row[0]) for row in cursor.fetchall()}
-
-    @staticmethod
-    def _rls_applies_to_current_role(cursor: Any, schema: str, table: str) -> bool:
-        cursor.execute(
-            """
-            SELECT relation.relrowsecurity,
-                   relation.relforcerowsecurity,
-                   pg_has_role(current_user, relation.relowner, 'MEMBER'),
-                   current_role_definition.rolbypassrls
-              FROM pg_class AS relation
-              JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
-              JOIN pg_roles AS current_role_definition
-                ON current_role_definition.rolname = current_user
-             WHERE namespace.nspname = %s AND relation.relname = %s
-            """,
-            (schema, table),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return False
-        enabled, forced, role_owns_table, role_bypasses_rls = map(bool, row)
-        return enabled and not role_bypasses_rls and (forced or not role_owns_table)
-
-    @staticmethod
-    def _foreign_key_exists(
-        cursor: Any,
-        *,
-        source_schema: str,
-        source_table: str,
-        source_column: str,
-        target_schema: str,
-        target_table: str,
-        target_column: str,
-    ) -> bool:
-        cursor.execute(
-            """
-            SELECT 1
-              FROM pg_constraint AS constraint_def
-              JOIN pg_class AS source_relation
-                ON source_relation.oid = constraint_def.conrelid
-              JOIN pg_namespace AS source_namespace
-                ON source_namespace.oid = source_relation.relnamespace
-              JOIN pg_class AS target_relation
-                ON target_relation.oid = constraint_def.confrelid
-              JOIN pg_namespace AS target_namespace
-                ON target_namespace.oid = target_relation.relnamespace
-              JOIN LATERAL generate_subscripts(constraint_def.conkey, 1)
-                   AS position(index) ON true
-              JOIN pg_attribute AS source_attribute
-                ON source_attribute.attrelid = source_relation.oid
-               AND source_attribute.attnum = constraint_def.conkey[position.index]
-              JOIN pg_attribute AS target_attribute
-                ON target_attribute.attrelid = target_relation.oid
-               AND target_attribute.attnum = constraint_def.confkey[position.index]
-             WHERE constraint_def.contype = 'f'
-               AND source_namespace.nspname = %s
-               AND source_relation.relname = %s
-               AND source_attribute.attname = %s
-               AND target_namespace.nspname = %s
-               AND target_relation.relname = %s
-               AND target_attribute.attname = %s
-             LIMIT 1
-            """,
-            (
-                source_schema,
-                source_table,
-                source_column,
-                target_schema,
-                target_table,
-                target_column,
-            ),
-        )
-        return cursor.fetchone() is not None
-
-    @staticmethod
-    def _compatible(field_type: FieldType, data_type: str, udt_name: str) -> bool:
-        compatible_types = _DATABASE_TYPES[field_type]
-        return data_type.lower() in compatible_types or udt_name.lower() in compatible_types
-
-    def _validate_cursor(self, cursor: Any, contract: GenerationContract) -> None:
-        records = {record.record_type: record for record in contract.records}
-        for record in contract.records:
-            destination = record.destination
-            schema = destination.schema_name
-            table_name = destination.table
-            if not self.allowlist.allows(schema, table_name):
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_FORBIDDEN,
-                    "destination is outside the deployment allowlist",
-                    details={"schema": schema, "table": table_name},
-                )
-            columns = self._catalog_columns(cursor, schema, table_name)
-            if not columns:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "destination table does not exist",
-                    details={"schema": schema, "table": table_name},
-                )
-            if not self._rls_applies_to_current_role(cursor, schema, table_name):
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_FORBIDDEN,
-                    "destination table does not enforce tenant RLS for the service role",
-                    details={"schema": schema, "table": table_name},
-                )
-            cursor.execute(
-                "SELECT has_table_privilege(current_user, %s, 'INSERT,SELECT,DELETE')",
-                (f'"{schema}"."{table_name}"',),
-            )
-            privilege = cursor.fetchone()
-            if not privilege or not privilege[0]:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_FORBIDDEN,
-                    "database role lacks required destination privileges",
-                    details={"schema": schema, "table": table_name},
-                )
-            mapped_columns = set(destination.columns.values())
-            for field_name, column in destination.columns.items():
-                shape = columns.get(column)
-                if shape is None or not self._compatible(
-                    record.fields[field_name].type, str(shape[0]), str(shape[1])
-                ):
-                    raise SyntheticDataError(
-                        ErrorCode.DESTINATION_INVALID,
-                        "destination column type is incompatible",
-                        details={"record_type": record.record_type, "column": column},
-                    )
-            required = {
-                name
-                for name, shape in columns.items()
-                if str(shape[2]) == "NO"
-                and shape[3] is None
-                and str(shape[4]) != "YES"
-                and str(shape[5]) in {"NEVER", "None", ""}
-            }
-            if not required <= mapped_columns:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "destination omits a required column without a default",
-                    details={"record_type": record.record_type},
-                )
-            physical_key = frozenset(destination.columns[field] for field in destination.key_fields)
-            if physical_key not in self._unique_keys(cursor, schema, table_name):
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "destination key_fields do not identify a unique database key",
-                    details={"record_type": record.record_type},
-                )
-        for relation in contract.relations:
-            source_type, source_field = relation.from_field.split(".", 1)
-            target_type, target_field = relation.to_field.split(".", 1)
-            source = records[source_type]
-            target = records[target_type]
-            if not self._foreign_key_exists(
-                cursor,
-                source_schema=source.destination.schema_name,
-                source_table=source.destination.table,
-                source_column=source.destination.columns[source_field],
-                target_schema=target.destination.schema_name,
-                target_table=target.destination.table,
-                target_column=target.destination.columns[target_field],
-            ):
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "declared relation does not match a database foreign key",
-                    details={"relation": f"{relation.from_field}->{relation.to_field}"},
-                )
-
-    def validate_destinations(self, tenant_id: str, contract: GenerationContract) -> None:
-        def operation() -> None:
-            with (
-                self.connector() as connection,
-                connection.transaction(),
-                connection.cursor() as cursor,
-            ):
-                self._tenant(cursor, tenant_id)
-                self._validate_cursor(cursor, contract)
-
-        self._retry(operation)
-
     def commit(
         self,
         tenant_id: str,
@@ -427,7 +193,6 @@ class SqlGenerationRepository:
                             )
                         return CommitOutcome(existing, True)
                     contract = write.request.generation_contract
-                    self._validate_cursor(cursor, contract)
                     specs = {record.record_type: record for record in contract.records}
                     plan = plan_destinations(contract)
                     delete_rank = {
@@ -522,15 +287,20 @@ class SqlGenerationRepository:
                     ErrorCode.DESTINATION_CONFLICT,
                     "generated data conflicts with the destination",
                 ) from error
-            except (psycopg.errors.CheckViolation, psycopg.errors.NotNullViolation) as error:
+            except _DESTINATION_INVALID as error:
                 raise SyntheticDataError(
                     ErrorCode.DESTINATION_INVALID,
-                    "generated data violates a destination constraint",
+                    "KingbaseES rejected the caller-declared destination or generated values",
                 ) from error
             except psycopg.errors.InsufficientPrivilege as error:
                 raise SyntheticDataError(
                     ErrorCode.DESTINATION_FORBIDDEN,
                     "database tenant policy denied the destination write",
+                ) from error
+            except ValueError as error:
+                raise SyntheticDataError(
+                    ErrorCode.DESTINATION_INVALID,
+                    "database driver rejected a caller-declared destination identifier",
                 ) from error
 
         return self._retry(operation)
@@ -609,7 +379,12 @@ class SqlGenerationRepository:
                     ErrorCode.DESTINATION_FORBIDDEN,
                     "database tenant policy denied the destination deletion",
                 ) from error
-            except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn) as error:
+            except (
+                psycopg.errors.InvalidSchemaName,
+                psycopg.errors.UndefinedTable,
+                psycopg.errors.UndefinedColumn,
+                ValueError,
+            ) as error:
                 raise SyntheticDataError(
                     ErrorCode.DELETE_CONFLICT,
                     "generated destination schema changed after the commit",

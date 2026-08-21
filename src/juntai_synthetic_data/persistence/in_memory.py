@@ -12,13 +12,12 @@ from typing import Any
 from juntai_synthetic_data.contracts.models import (
     DestinationResult,
     FieldType,
-    GenerationContract,
     GenerationResult,
     GenerationState,
     ProviderView,
     canonical_json,
 )
-from juntai_synthetic_data.destinations import DestinationAllowlist, plan_destinations
+from juntai_synthetic_data.destinations import plan_destinations
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 
 from .models import CommitOutcome, GenerationWrite
@@ -55,11 +54,9 @@ class InMemoryGenerationRepository:
         self,
         catalog: Mapping[tuple[str, str], TableDefinition],
         *,
-        allowlist: DestinationAllowlist | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.catalog = dict(catalog)
-        self.allowlist = allowlist or DestinationAllowlist(frozenset(self.catalog))
         self.clock = clock or (lambda: datetime.now(UTC))
         self._lock = threading.RLock()
         self._rows: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
@@ -91,67 +88,6 @@ class InMemoryGenerationRepository:
         with self._lock:
             return self._generations.get((tenant_id, generation_id))
 
-    def validate_destinations(self, tenant_id: str, contract: GenerationContract) -> None:
-        del tenant_id
-        records = {record.record_type: record for record in contract.records}
-        for record in contract.records:
-            destination = record.destination
-            identity = (destination.schema_name, destination.table)
-            if not self.allowlist.allows(*identity):
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_FORBIDDEN,
-                    "destination is outside the deployment allowlist",
-                    details={"schema": identity[0], "table": identity[1]},
-                )
-            table = self.catalog.get(identity)
-            if table is None:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "destination table does not exist",
-                    details={"schema": identity[0], "table": identity[1]},
-                )
-            for field_name, column in destination.columns.items():
-                if table.columns.get(column) is not record.fields[field_name].type:
-                    raise SyntheticDataError(
-                        ErrorCode.DESTINATION_INVALID,
-                        "destination column type is incompatible",
-                        details={"record_type": record.record_type, "column": column},
-                    )
-            mapped = frozenset(destination.columns.values())
-            if not table.required_columns <= mapped:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "destination omits a required column without a default",
-                    details={"record_type": record.record_type},
-                )
-            physical_key = tuple(destination.columns[name] for name in destination.key_fields)
-            if frozenset(physical_key) not in {frozenset(key) for key in table.unique_keys}:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "destination key_fields do not identify a unique database key",
-                    details={"record_type": record.record_type},
-                )
-        for relation in contract.relations:
-            source_type, source_field = relation.from_field.split(".", 1)
-            target_type, target_field = relation.to_field.split(".", 1)
-            source = records[source_type]
-            target = records[target_type]
-            source_column = source.destination.columns[source_field]
-            target_column = target.destination.columns[target_field]
-            expected = ForeignKeyDefinition(
-                columns=(source_column,),
-                target_schema=target.destination.schema_name,
-                target_table=target.destination.table,
-                target_columns=(target_column,),
-            )
-            source_table = self.catalog[(source.destination.schema_name, source.destination.table)]
-            if expected not in source_table.foreign_keys:
-                raise SyntheticDataError(
-                    ErrorCode.DESTINATION_INVALID,
-                    "declared relation does not match a database foreign key",
-                    details={"relation": f"{relation.from_field}->{relation.to_field}"},
-                )
-
     @staticmethod
     def _conflicts(
         table: TableDefinition,
@@ -165,6 +101,46 @@ class InMemoryGenerationRepository:
             if any(tuple(item.get(column) for column in key) == candidate for item in existing):
                 return True
         return False
+
+    def _enforce_database_write(
+        self,
+        *,
+        tenant_id: str,
+        record_type: str,
+        table: TableDefinition,
+        row: dict[str, Any],
+        field_types: Mapping[str, FieldType],
+        staged: Mapping[tuple[str, str, str], list[dict[str, Any]]],
+    ) -> None:
+        if not table.required_columns <= set(row):
+            raise SyntheticDataError(
+                ErrorCode.DESTINATION_INVALID,
+                "KingbaseES rejected omitted required destination columns",
+                details={"record_type": record_type},
+            )
+        for column, field_type in field_types.items():
+            if table.columns.get(column) is not field_type:
+                raise SyntheticDataError(
+                    ErrorCode.DESTINATION_INVALID,
+                    "KingbaseES rejected a destination column or value type",
+                    details={"record_type": record_type, "column": column},
+                )
+        for foreign_key in table.foreign_keys:
+            candidate = tuple(row.get(column) for column in foreign_key.columns)
+            if any(value is None for value in candidate):
+                continue
+            target_rows = staged.get(
+                (tenant_id, foreign_key.target_schema, foreign_key.target_table), []
+            )
+            if not any(
+                tuple(target.get(column) for column in foreign_key.target_columns) == candidate
+                for target in target_rows
+            ):
+                raise SyntheticDataError(
+                    ErrorCode.DESTINATION_CONFLICT,
+                    "KingbaseES rejected a destination foreign-key value",
+                    details={"record_type": record_type},
+                )
 
     def commit(
         self,
@@ -182,7 +158,6 @@ class InMemoryGenerationRepository:
                         "Idempotency-Key was already used for different content",
                     )
                 return CommitOutcome(existing, True)
-            self.validate_destinations(tenant_id, write.request.generation_contract)
             staged = copy.deepcopy(self._rows)
             contract = write.request.generation_contract
             specs = {record.record_type: record for record in contract.records}
@@ -194,12 +169,32 @@ class InMemoryGenerationRepository:
                 spec = specs[record_type]
                 destination = spec.destination
                 identity = (tenant_id, destination.schema_name, destination.table)
-                table = self.catalog[(destination.schema_name, destination.table)]
+                table = self.catalog.get((destination.schema_name, destination.table))
+                if table is None:
+                    raise SyntheticDataError(
+                        ErrorCode.DESTINATION_INVALID,
+                        "KingbaseES rejected a nonexistent caller-declared destination",
+                        details={
+                            "schema": destination.schema_name,
+                            "table": destination.table,
+                        },
+                    )
                 rows = staged.setdefault(identity, [])
                 for generated in write.dataset.records[record_type]:
                     database_row = {
                         column: generated[field] for field, column in destination.columns.items()
                     }
+                    self._enforce_database_write(
+                        tenant_id=tenant_id,
+                        record_type=record_type,
+                        table=table,
+                        row=database_row,
+                        field_types={
+                            destination.columns[field]: spec.fields[field].type
+                            for field in destination.columns
+                        },
+                        staged=staged,
+                    )
                     if self._conflicts(table, rows, database_row):
                         raise SyntheticDataError(
                             ErrorCode.DESTINATION_CONFLICT,

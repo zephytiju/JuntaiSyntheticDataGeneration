@@ -10,5 +10,6 @@ verifies the contract manifest before constructing authorization. It does not re
 peer-principal, delegation, or policy semantics.
 
 Only `synthetic` and `internal` classifications are accepted. The service is test-fleet-only and
-must not be admitted to a production application fleet. Destination authority is narrowed again by
-the deployment allowlist and database grants.
+must not be admitted to a production application fleet. Authenticated internal callers are
+authoritative for logical destinations; normal database grants and RLS still apply when KingbaseES
+executes the transaction. Synthetic maintains no separate destination policy.

@@ -8,11 +8,11 @@ metadata:
 contracts:
   openapi:
     path: contracts/openapi.json
-    digest: sha256:15795e1a7f82b10289e67575d6c35e0931885a47bc2d4b51adcc03f6c4974b33
+    digest: sha256:1baa48eeb089d9e2244ca601f6c454a4ea5e7acfff8140f3f88a86e5110ac38a
   mcp:
     path: contracts/mcp-descriptor.json
-    digest: sha256:bf5eef23851cf046b01b82c21225c7534f52af98dae7415587f18d8b7de36432
-    descriptorDigest: sha256:bf5eef23851cf046b01b82c21225c7534f52af98dae7415587f18d8b7de36432
+    digest: sha256:054a7b8aa082f1b3c805f9da96c3db3424ad907b305c338be9216a26bce8a9d8
+    descriptorDigest: sha256:054a7b8aa082f1b3c805f9da96c3db3424ad907b305c338be9216a26bce8a9d8
 sources:
   root: .
   units:
@@ -69,8 +69,8 @@ sources:
       kind: reference
       audiences: [human, agent, developer, operator]
       locale: en
-      title: Destination validation
-      sourcePath: reference/destination-validation.md
+      title: Destination handling
+      sourcePath: reference/destination-handling.md
       parentUnitId: synthetic-data.overview
       order: 50
       lifecycle: release

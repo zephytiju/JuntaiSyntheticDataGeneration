@@ -96,6 +96,21 @@ def test_destination_key_must_be_generated_mapped_and_non_nullable() -> None:
         CreateGenerationRequest.model_validate(data)
 
 
+def test_destination_identifiers_are_bounded_authoritative_strings() -> None:
+    data = request_data()
+    destination = data["generation_contract"]["records"][0]["destination"]
+    destination["schema"] = "Axiom Preview"
+    destination["table"] = 'Site "Records"'
+    destination["columns"]["site_id"] = "Site ID"
+
+    request = CreateGenerationRequest.model_validate(data)
+
+    parsed = request.generation_contract.records[0].destination
+    assert parsed.schema_name == "Axiom Preview"
+    assert parsed.table == 'Site "Records"'
+    assert parsed.columns["site_id"] == "Site ID"
+
+
 def test_relation_cycles_are_rejected() -> None:
     data = request_data()
     data["generation_contract"]["records"][1]["fields"]["asset_id"]["type"] = "string"

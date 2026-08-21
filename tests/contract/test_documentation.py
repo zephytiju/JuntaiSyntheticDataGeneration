@@ -24,7 +24,7 @@ def test_documentation_contracts_pin_exact_source_release() -> None:
     assert descriptor["digest"] == descriptor["descriptorDigest"]
     assert descriptor["digest"] == _digest(DOCUMENTATION / descriptor["path"])
     assert openapi["digest"] == (
-        "sha256:15795e1a7f82b10289e67575d6c35e0931885a47bc2d4b51adcc03f6c4974b33"
+        "sha256:1baa48eeb089d9e2244ca601f6c454a4ea5e7acfff8140f3f88a86e5110ac38a"
     )
 
 
@@ -71,7 +71,26 @@ def test_documentation_contains_no_withdrawn_runtime_semantics() -> None:
         "juntai-platform-swp-stream",
         "platform_worker_delivery_v1",
         "juntai.synthetic.worker/v1",
+        "juntai_synthetic_data_destination_allowlist_file",
     ):
         assert excluded not in authored
     assert "single application" in authored
     assert "logical destination" in authored
+
+
+def test_destination_authority_has_no_service_policy_or_catalog_preflight() -> None:
+    package = ROOT / "src/juntai_synthetic_data"
+    source = "\n".join(
+        path.read_text().lower()
+        for path in package.rglob("*.py")
+        if "migrations" not in path.parts and path.name != "migration.py"
+    )
+    for excluded in (
+        "destinationallowlist",
+        "validate_destinations",
+        "information_schema.columns",
+        "has_table_privilege",
+        "pg_constraint",
+        "pg_index",
+    ):
+        assert excluded not in source

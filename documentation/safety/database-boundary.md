@@ -1,8 +1,8 @@
 # Database and data boundary
 
-Synthetic writes preview data only to approved application schemas in the test fleet's single
-application database cluster. This is application data, not Platform data. The database role has no
-authority over Platform databases, production application databases, unapproved schemas/tables, or
+Synthetic writes preview data to caller-declared application schemas in the test fleet's single
+application database cluster. This is application data, not Platform data. The injected connection
+cannot select Platform databases, production application databases, another application cluster, or
 deployment control planes.
 
 The service retains request/digest/provider/timestamp metadata and the exact generated keys required

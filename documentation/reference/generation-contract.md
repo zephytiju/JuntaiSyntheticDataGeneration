@@ -9,9 +9,10 @@ The unpublished V1 request uses `juntai.synthetic-data.request/v1` and contains:
 - maximum total records and canonical generated-byte size.
 
 `columns` maps every generated field exactly once to a database column. `key_fields` names generated
-fields whose mapped columns form a live unique or primary key. A relation target must be unique, and
-the relation must match a live database foreign key. V1 rejects relation graphs that cannot be
-inserted and deleted in a deterministic dependency order.
+fields that the caller authoritatively declares identify each inserted row. A relation target must
+be unique within the generated dataset. V1 rejects relation graphs that cannot be inserted and
+deleted in a deterministic dependency order; KingbaseES enforces its live keys and foreign keys when
+the transaction executes.
 
 The request cannot select a database, host, port, DSN, credential, tenant, arbitrary connection
 option, or SQL fragment. Unknown fields are rejected. Provider output must match the exact declared

@@ -1,5 +1,5 @@
-"""Logical destination allowlist and deterministic relation planning."""
+"""Deterministic planning for caller-declared logical destinations."""
 
-from .planning import ALLOWLIST_VERSION, DestinationAllowlist, DestinationPlan, plan_destinations
+from .planning import DestinationPlan, plan_destinations
 
-__all__ = ["ALLOWLIST_VERSION", "DestinationAllowlist", "DestinationPlan", "plan_destinations"]
+__all__ = ["DestinationPlan", "plan_destinations"]

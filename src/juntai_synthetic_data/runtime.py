@@ -9,7 +9,6 @@ from typing import Any
 import psycopg
 from juntai.observability import ObservabilityConfig, configure_observability
 
-from juntai_synthetic_data.destinations import DestinationAllowlist
 from juntai_synthetic_data.persistence import SqlGenerationRepository
 from juntai_synthetic_data.policy import DefaultPolicyEngine
 from juntai_synthetic_data.providers import DeterministicTabularProvider, ProviderRegistry
@@ -19,7 +18,6 @@ from juntai_synthetic_data.service import SyntheticDataService
 def build_runtime_service(
     *,
     connector: Callable[[], AbstractContextManager[Any]],
-    allowlist: DestinationAllowlist,
     test_fleet: bool,
     service_image_digest: str | None = None,
     otlp_endpoint: str = "http://127.0.0.1:4318",
@@ -38,7 +36,7 @@ def build_runtime_service(
     )
     provider = DeterministicTabularProvider()
     return SyntheticDataService(
-        repository=SqlGenerationRepository(connector, allowlist=allowlist),
+        repository=SqlGenerationRepository(connector),
         providers=ProviderRegistry((provider,)),
         policy=DefaultPolicyEngine(),
     )

@@ -65,8 +65,8 @@ def main() -> int | None:
 
 def _run_server() -> None:
     raise RuntimeError(
-        "serve binding is intentionally disabled until the exact destination-allowlist "
-        "configuration name and test-fleet marker are approved"
+        "serve binding is intentionally disabled until the exact test-fleet admission marker is "
+        "approved"
     )
 
 

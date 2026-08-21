@@ -15,6 +15,7 @@ REQUEST_VERSION = "juntai.synthetic-data.request/v1"
 CONTRACT_VERSION = "juntai.synthetic-data.contract/v1"
 
 Identifier = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,62}$")]
+DestinationIdentifier = Annotated[str, StringConstraints(min_length=1, max_length=63)]
 Seed = Annotated[str, StringConstraints(min_length=1, max_length=256)]
 Digest = Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")]
 
@@ -103,9 +104,9 @@ class FieldSpec(StrictModel):
 
 
 class DestinationSpec(StrictModel):
-    schema_name: Identifier = Field(alias="schema")
-    table: Identifier
-    columns: dict[Identifier, Identifier] = Field(min_length=1, max_length=256)
+    schema_name: DestinationIdentifier = Field(alias="schema")
+    table: DestinationIdentifier
+    columns: dict[Identifier, DestinationIdentifier] = Field(min_length=1, max_length=256)
     key_fields: tuple[Identifier, ...] = Field(min_length=1, max_length=32)
 
     @model_validator(mode="after")
@@ -244,8 +245,8 @@ class ProviderView(StrictModel):
 
 
 class DestinationResult(StrictModel):
-    schema_name: Identifier = Field(alias="schema")
-    table: Identifier
+    schema_name: DestinationIdentifier = Field(alias="schema")
+    table: DestinationIdentifier
     records_written: int = Field(ge=0)
 
 

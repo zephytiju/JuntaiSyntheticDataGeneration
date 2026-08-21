@@ -8,6 +8,7 @@ from pathlib import Path
 EXPECTED_CHECKS = {
     "concurrency-lock",
     "cross-schema-atomic-write",
+    "database-destination-rejection",
     "database-restart",
     "delete-idempotence",
     "destination-conflict-rollback",
@@ -17,6 +18,7 @@ EXPECTED_CHECKS = {
     "ledger-current",
     "lost-response-recovery",
     "no-platform-database-dependency",
+    "quoted-caller-destination",
     "released-1.2.0-baseline-upgrade",
     "repeat-idempotence",
     "tenant-rls-isolation",

@@ -12,7 +12,6 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from juntai_synthetic_data.contracts.models import CreateGenerationRequest
-from juntai_synthetic_data.destinations import DestinationAllowlist
 from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 from juntai_synthetic_data.migration import (
     Migration,
@@ -141,8 +140,10 @@ def _prepare_application_schema(admin_dsn: str) -> None:
     with psycopg.connect(admin_dsn) as connection, connection.cursor() as cursor:
         cursor.execute("DROP SCHEMA IF EXISTS lattice_preview CASCADE")
         cursor.execute("DROP SCHEMA IF EXISTS axiom_preview CASCADE")
+        cursor.execute('DROP SCHEMA IF EXISTS "Caller Preview" CASCADE')
         cursor.execute("CREATE SCHEMA axiom_preview")
         cursor.execute("CREATE SCHEMA lattice_preview")
+        cursor.execute('CREATE SCHEMA "Caller Preview"')
         cursor.execute(
             """
             CREATE TABLE axiom_preview.site (
@@ -165,9 +166,20 @@ def _prepare_application_schema(admin_dsn: str) -> None:
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE "Caller Preview"."Quoted Table" (
+                "Tenant ID" varchar(128) NOT NULL,
+                "Row ID" varchar(64) NOT NULL,
+                PRIMARY KEY ("Tenant ID", "Row ID")
+            )
+            """
+        )
         for table in ("axiom_preview.site", "lattice_preview.asset"):
             cursor.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
             cursor.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        cursor.execute('ALTER TABLE "Caller Preview"."Quoted Table" ENABLE ROW LEVEL SECURITY')
+        cursor.execute('ALTER TABLE "Caller Preview"."Quoted Table" FORCE ROW LEVEL SECURITY')
         cursor.execute(
             "CREATE POLICY site_tenant ON axiom_preview.site "
             "USING (tenant_id = current_setting('juntai.tenant_id', true)) "
@@ -179,7 +191,17 @@ def _prepare_application_schema(admin_dsn: str) -> None:
             "WITH CHECK (tenant_id = current_setting('juntai.tenant_id', true))"
         )
         cursor.execute(
+            'CREATE POLICY quoted_tenant ON "Caller Preview"."Quoted Table" '
+            "USING (\"Tenant ID\" = current_setting('juntai.tenant_id', true)) "
+            "WITH CHECK (\"Tenant ID\" = current_setting('juntai.tenant_id', true))"
+        )
+        cursor.execute(
             sql.SQL("GRANT USAGE ON SCHEMA axiom_preview, lattice_preview TO {}").format(
+                sql.Identifier(RUNTIME_ROLE)
+            )
+        )
+        cursor.execute(
+            sql.SQL('GRANT USAGE ON SCHEMA "Caller Preview" TO {}').format(
                 sql.Identifier(RUNTIME_ROLE)
             )
         )
@@ -187,6 +209,11 @@ def _prepare_application_schema(admin_dsn: str) -> None:
             sql.SQL(
                 "GRANT SELECT, INSERT, DELETE ON axiom_preview.site, lattice_preview.asset TO {}"
             ).format(sql.Identifier(RUNTIME_ROLE))
+        )
+        cursor.execute(
+            sql.SQL('GRANT SELECT, INSERT, DELETE ON "Caller Preview"."Quoted Table" TO {}').format(
+                sql.Identifier(RUNTIME_ROLE)
+            )
         )
         cursor.execute(
             sql.SQL("GRANT USAGE ON SCHEMA juntai_synthetic_data TO {}").format(
@@ -267,13 +294,41 @@ def _request(tenant_id: str, seed: str) -> CreateGenerationRequest:
     )
 
 
-def _service(runtime_dsn: str) -> SyntheticDataService:
-    allowlist = DestinationAllowlist(
-        frozenset({("axiom_preview", "site"), ("lattice_preview", "asset")})
+def _quoted_destination_request(tenant_id: str) -> CreateGenerationRequest:
+    return CreateGenerationRequest.model_validate(
+        {
+            "generation_contract": {
+                "records": [
+                    {
+                        "record_type": "quoted",
+                        "count": 2,
+                        "destination": {
+                            "schema": "Caller Preview",
+                            "table": "Quoted Table",
+                            "columns": {"tenant_id": "Tenant ID", "row_id": "Row ID"},
+                            "key_fields": ["row_id"],
+                        },
+                        "fields": {
+                            "tenant_id": {
+                                "type": "string",
+                                "distribution": {"kind": "constant", "value": tenant_id},
+                            },
+                            "row_id": {"type": "string", "unique": True},
+                        },
+                    }
+                ],
+                "bounds": {"max_records": 2, "max_bytes": 100_000},
+            },
+            "seed": "quoted-destination-seed",
+            "provider": {"class": "tabular", "requirements": {"deterministic": True}},
+            "policy": {"data_classification": "synthetic"},
+        }
     )
+
+
+def _service(runtime_dsn: str) -> SyntheticDataService:
     repository = SqlGenerationRepository(
         lambda: psycopg.connect(runtime_dsn),
-        allowlist=allowlist,
         retry_base_seconds=0,
         retry_cap_seconds=0,
     )
@@ -315,13 +370,39 @@ def _generation_matrix(admin_dsn: str) -> None:
         "SELECT count(*) FROM juntai_synthetic_data.generations WHERE tenant_id = 'tenant-a'",
     ) == [(1,)]
 
+    invalid_data = request_a.model_dump(mode="json", by_alias=True)
+    invalid_data["generation_contract"]["records"][0]["destination"]["schema"] = "Missing Schema"
+    invalid_request = CreateGenerationRequest.model_validate(invalid_data)
+    try:
+        service.create_generation("tenant-a", "missing-destination", invalid_request)
+    except SyntheticDataError as error:
+        assert error.code is ErrorCode.DESTINATION_INVALID
+    else:
+        raise AssertionError("nonexistent caller destination unexpectedly committed")
+    assert _execute(admin_dsn, "SELECT count(*) FROM axiom_preview.site") == [(2,)]
+    assert _execute(admin_dsn, "SELECT count(*) FROM lattice_preview.asset") == [(4,)]
+    assert _execute(
+        admin_dsn,
+        "SELECT count(*) FROM juntai_synthetic_data.generations WHERE tenant_id = 'tenant-a'",
+    ) == [(1,)]
+
+    quoted = service.create_generation(
+        "tenant-a", "quoted-destination", _quoted_destination_request("tenant-a")
+    )
+    assert quoted.result.record_count == 2
+    assert _execute(admin_dsn, 'SELECT count(*) FROM "Caller Preview"."Quoted Table"') == [(2,)]
+    assert (
+        service.delete_generation("tenant-a", quoted.result.generation_id).state.value == "DELETED"
+    )
+    assert _execute(admin_dsn, 'SELECT count(*) FROM "Caller Preview"."Quoted Table"') == [(0,)]
+
     request_b = _request("tenant-b", "real-kes-seed-b")
     created_b = service.create_generation("tenant-b", "real-kes-b", request_b)
     assert created_b.result.record_count == 6
     with psycopg.connect(runtime_dsn) as connection, connection.cursor() as cursor:
         cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-a', false)")
         cursor.execute("SELECT count(*) FROM juntai_synthetic_data.generations")
-        assert cursor.fetchone() == (1,)
+        assert cursor.fetchone() == (2,)
         cursor.execute("SELECT count(*) FROM axiom_preview.site")
         assert cursor.fetchone() == (2,)
         cursor.execute("SELECT set_config('juntai.tenant_id', 'tenant-b', false)")
@@ -356,6 +437,8 @@ def _primary(dsn: str, binding: MigrationBinding) -> dict[str, object]:
             "idempotent-replay",
             "lost-response-recovery",
             "destination-conflict-rollback",
+            "database-destination-rejection",
+            "quoted-caller-destination",
             "exact-key-delete",
             "delete-idempotence",
             "tenant-rls-isolation",

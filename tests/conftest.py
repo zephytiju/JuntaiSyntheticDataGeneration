@@ -5,7 +5,6 @@ from typing import Any
 import pytest
 
 from juntai_synthetic_data.contracts.models import CreateGenerationRequest, FieldType
-from juntai_synthetic_data.destinations import DestinationAllowlist
 from juntai_synthetic_data.persistence import (
     ForeignKeyDefinition,
     InMemoryGenerationRepository,
@@ -100,11 +99,7 @@ def catalog() -> dict[tuple[str, str], TableDefinition]:
 
 
 def make_repository() -> InMemoryGenerationRepository:
-    value = catalog()
-    return InMemoryGenerationRepository(
-        value,
-        allowlist=DestinationAllowlist(frozenset(value)),
-    )
+    return InMemoryGenerationRepository(catalog())
 
 
 def make_service(

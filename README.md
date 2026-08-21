@@ -2,7 +2,7 @@
 
 This repository owns a small synchronous service for generating preview data in Juntai test fleets.
 The service validates bounded structural generation rules, generates deterministic records in
-process, and atomically inserts them into approved schemas/tables in the fleet's one application
+process, and atomically inserts them into caller-declared schemas/tables in the fleet's one application
 KingbaseES cluster. It records generation metadata and exact written keys in its own schema in the
 same transaction.
 
@@ -21,8 +21,10 @@ data dependency.
 
 Each record type declares its logical `{schema, table, columns, key_fields}` destination. Requests
 cannot carry database addresses, credentials, tenant identity, arbitrary connection options, or raw
-SQL. Runtime validates the deployment allowlist and live database catalog, including column types,
-required/defaulted columns, unique keys, and foreign keys, before generating data.
+SQL. Authenticated internal callers are authoritative for those logical destinations. Synthetic
+quotes identifiers through the database driver and binds every value; KingbaseES enforces object
+existence, columns, types, defaults, keys, relations, grants, constraints, and RLS when the atomic
+transaction executes.
 
 ## Safety boundary
 
@@ -32,10 +34,10 @@ Tenant identity comes only from verified IAM context; Synthetic metadata is prot
 published IAM tuple is `juntai-iam==1.1.0` and `juntai-iam-contracts==1.1.1`; the service verifies the
 contracts manifest and imports, rather than recreates, IAM semantics.
 
-The exact deployment-facing destination-allowlist binding name and test-fleet admission marker are
-intentionally not declared here until fixed by the canonical release contract. The service release
-must remain unpublished and fail closed until those names are approved and the production `serve`
-binding is enabled.
+Authenticated internal callers are the sole source of logical destination names. The exact
+deployment-facing test-fleet admission marker is intentionally not declared here until fixed by the
+canonical release contract. The service release must remain unpublished and fail closed until that
+marker is approved and the production `serve` binding is enabled.
 
 ## Verification
 
