@@ -17,7 +17,7 @@ from juntai_synthetic_data.errors import ErrorCode, SyntheticDataError
 
 class RequestAuthorizer(Protocol):
     async def authorize(
-        self, request: Request, *, action: str, job_id: str | None = None
+        self, request: Request, *, action: str, generation_id: str | None = None
     ) -> str: ...
 
 
@@ -25,10 +25,16 @@ class JuntaiIamAuthorizer:
     def __init__(self, middleware: IamMiddleware) -> None:
         self.middleware = middleware
 
-    async def authorize(self, request: Request, *, action: str, job_id: str | None = None) -> str:
+    async def authorize(
+        self, request: Request, *, action: str, generation_id: str | None = None
+    ) -> str:
         try:
             identity = self.middleware.require_human_or_delegated(request)
-            resource = "synthetic-data/jobs" if job_id is None else f"synthetic-data/jobs/{job_id}"
+            resource = (
+                "synthetic-data/generations"
+                if generation_id is None
+                else f"synthetic-data/generations/{generation_id}"
+            )
             await self.middleware.authorize(
                 identity,
                 AuthorizationRequest(
@@ -49,8 +55,10 @@ class JuntaiIamAuthorizer:
 
 
 class UnconfiguredAuthorizer:
-    async def authorize(self, request: Request, *, action: str, job_id: str | None = None) -> str:
-        del request, action, job_id
+    async def authorize(
+        self, request: Request, *, action: str, generation_id: str | None = None
+    ) -> str:
+        del request, action, generation_id
         raise SyntheticDataError(
             ErrorCode.DEPENDENCY_UNAVAILABLE,
             "Juntai IAM authorizer is not configured",

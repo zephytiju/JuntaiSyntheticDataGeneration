@@ -7,7 +7,7 @@ from typing import cast
 
 from juntai.sdk.fuse_api.adapters.http import HTTPAdapter
 
-from juntai_synthetic_data.api import build_job_group
+from juntai_synthetic_data.api import build_generation_group
 from juntai_synthetic_data.api.openapi import apply_bearer_security
 from juntai_synthetic_data.service import SyntheticDataService
 
@@ -17,7 +17,7 @@ ROOT = Path(__file__).parents[1]
 def main() -> None:
     service = cast(SyntheticDataService, object())
     app = HTTPAdapter(title="Juntai Synthetic Data Generation", version="1.3.0").build(
-        [build_job_group(service)], []
+        [build_generation_group(service)], []
     )
     document = apply_bearer_security(app.openapi())
     content = (

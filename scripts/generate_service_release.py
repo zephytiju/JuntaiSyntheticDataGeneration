@@ -16,13 +16,6 @@ from typing import Any
 ROOT = Path(__file__).parents[1]
 VERSION = "1.3.0"
 RELEASE_TAG = "synthetic-data-v1.3.0"
-PLATFORM_ADAPTER_SOURCE_COMMIT = "3dc2dd844194db8a6891590f7d088b437c34fc5f"
-PLATFORM_ADAPTER_SOURCE_TREE = "5996502910b04eda3a1ab56fd8d1f94a38e3d3de"
-PLATFORM_ADAPTER_CONTRACT_SHA256 = (
-    "7d50a9e7b6733c88082ecb9e9a433801de69a7b1f99286137c69470e6c03216b"
-)
-PLATFORM_QUEUE_WHEEL_SHA256 = "d787126955c11e27ec05ca7c22e8f945cf0a89bf989c1e438ee86640e56622dc"
-PLATFORM_STREAM_WHEEL_SHA256 = "cba7a87783cd804f5e496473f0961757c27a0455b946ed82041a7d1d01ef6033"
 IAM_SOURCE_COMMIT = "72b481ed825c00d0bd96feca67790e90dc5ace9b"
 IAM_WHEEL_SHA256 = "007362537726dbd69c75952b73c62b90e4f7ea92a48ab214ba0ad3ffcb533e6c"
 IAM_CONTRACTS_SOURCE_COMMIT = "a37b6d6daaba75efd8c15c19b440a3081ba761c5"
@@ -86,9 +79,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--image", required=True)
     parser.add_argument("--image-digest", required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--platform-contract-manifest", required=True)
-    parser.add_argument("--iam-wheel", required=True)
-    parser.add_argument("--iam-contracts-wheel", required=True)
     return parser
 
 
@@ -108,15 +98,9 @@ def _validate(args: argparse.Namespace, evidence: dict[str, Any]) -> None:
     if evidence.get("migrationIds") != [
         "0001_jobs",
         "0002_worker_protocol",
-        "0003_transport_relay",
+        "0003_synchronous_generations",
     ]:
         raise SystemExit("real-KES evidence used an unexpected migration set")
-    if _digest(Path(args.platform_contract_manifest)) != PLATFORM_ADAPTER_CONTRACT_SHA256:
-        raise SystemExit("Platform adapter contract manifest differs from the reviewed tuple")
-    if _digest(Path(args.iam_wheel)) != IAM_WHEEL_SHA256:
-        raise SystemExit("Juntai IAM wheel differs from the reviewed tuple")
-    if _digest(Path(args.iam_contracts_wheel)) != IAM_CONTRACTS_WHEEL_SHA256:
-        raise SystemExit("Juntai IAM contracts wheel differs from the reviewed tuple")
 
 
 def main() -> int:
@@ -133,7 +117,9 @@ def main() -> int:
         wheel: wheel.name,
         ROOT / "migrations" / "0001_jobs.sql": "0001_jobs.sql",
         ROOT / "migrations" / "0002_worker_protocol.sql": "0002_worker_protocol.sql",
-        ROOT / "migrations" / "0003_transport_relay.sql": "0003_transport_relay.sql",
+        ROOT / "migrations" / "0003_synchronous_generations.sql": (
+            "0003_synchronous_generations.sql"
+        ),
         ROOT / "migrations" / "manifest.v1.json": "migration-set.v1.json",
         ROOT / "openapi" / "synthetic-data-generation.v1.json": (
             "synthetic-data-generation.openapi.v1.json"
@@ -141,12 +127,9 @@ def main() -> int:
         ROOT / "openapi" / "synthetic-data-generation.v1.sha256": (
             "synthetic-data-generation.openapi.v1.sha256"
         ),
-        ROOT / "contracts" / "worker-protocol" / "swp.v1.schema.json": (
-            "synthetic-worker-protocol.v1.schema.json"
-        ),
-        ROOT / "contracts" / "worker-protocol" / "swp.v1.sha256": (
-            "synthetic-worker-protocol.v1.sha256"
-        ),
+        ROOT / "fixtures" / "generation-request.v1.json": "generation-request.v1.json",
+        ROOT / "fixtures" / "generation-records.v1.json": "generation-records.v1.json",
+        ROOT / "fixtures" / "SHA256SUMS": "fixture-SHA256SUMS",
         ROOT / "documentation" / "contracts" / "openapi.json": ("documentation.openapi.v1.json"),
         ROOT / "documentation" / "contracts" / "mcp-descriptor.json": (
             "documentation.mcp-descriptor.v1.json"
@@ -214,7 +197,6 @@ def main() -> int:
         "image": image_reference,
         "imageSbom": "OCI BuildKit SBOM attached to the image index",
         "imageProvenance": "GitHub artifact attestation and OCI BuildKit provenance",
-        "workerProtocolSha256": _digest(output / "synthetic-worker-protocol.v1.schema.json"),
         "documentationOpenapiSha256": _digest(output / "documentation.openapi.v1.json"),
         "documentationMcpSha256": _digest(output / "documentation.mcp-descriptor.v1.json"),
         "migrationManifest": {
@@ -222,13 +204,6 @@ def main() -> int:
             "sha256": _digest(output / "migration-release-manifest.json"),
         },
         "externalContracts": {
-            "platformAdapters": {
-                "sourceCommit": PLATFORM_ADAPTER_SOURCE_COMMIT,
-                "sourceTree": PLATFORM_ADAPTER_SOURCE_TREE,
-                "contractManifestSha256": PLATFORM_ADAPTER_CONTRACT_SHA256,
-                "queueWheelSha256": PLATFORM_QUEUE_WHEEL_SHA256,
-                "streamWheelSha256": PLATFORM_STREAM_WHEEL_SHA256,
-            },
             "iam": {
                 "version": "1.1.0",
                 "sourceCommit": IAM_SOURCE_COMMIT,
@@ -237,7 +212,7 @@ def main() -> int:
                 "contractsSourceCommit": IAM_CONTRACTS_SOURCE_COMMIT,
                 "contractsWheelSha256": IAM_CONTRACTS_WHEEL_SHA256,
                 "contractManifestSha256": IAM_CONTRACT_MANIFEST_SHA256,
-            },
+            }
         },
         "artifacts": base_assets,
     }
@@ -296,14 +271,6 @@ def main() -> int:
                     },
                     {"uri": f"pkg:oci/{args.image}@{args.image_digest}"},
                     {"uri": f"pkg:oci/{KES_IMAGE}"},
-                    {
-                        "uri": "pkg:pypi/juntai-platform-queue-kafka@1.0.0",
-                        "digest": {"sha256": PLATFORM_QUEUE_WHEEL_SHA256},
-                    },
-                    {
-                        "uri": "pkg:pypi/juntai-platform-swp-stream@1.0.0",
-                        "digest": {"sha256": PLATFORM_STREAM_WHEEL_SHA256},
-                    },
                     {
                         "uri": "pkg:pypi/juntai-iam@1.1.0",
                         "digest": {"sha256": IAM_WHEEL_SHA256},

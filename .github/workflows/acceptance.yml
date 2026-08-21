@@ -54,7 +54,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
           docker pull "$IMAGE@$IMAGE_DIGEST"
           docker tag "$IMAGE@$IMAGE_DIGEST" juntai-synthetic-data-generation:release-acceptance
-      - name: Run Synthetic licensed-KES migration/relay/replay/rollback suite
+      - name: Run synchronous Synthetic licensed-KES acceptance suite
         env:
           JUNTAI_SOURCE_REVISION: ${{ inputs.source_revision }}
           JUNTAI_SERVICE_IMAGE_DIGEST: ${{ inputs.image_digest }}

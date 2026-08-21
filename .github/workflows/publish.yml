@@ -2,7 +2,7 @@ name: Publish immutable image and contracts
 
 on:
   push:
-    branches: [main, "agent/synthetic-relay-v*"]
+    branches: [main]
     paths-ignore: ["release-evidence/**"]
 
 permissions:
@@ -22,17 +22,14 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
-      - name: Require official immutable Platform adapter publication
-        run: sh scripts/require-published-platform-adapters.sh
-      - run: python -m pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
+      - run: python -m pip install -e '.[test]'
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest -q
       - run: python scripts/generate_openapi.py
-      - run: python scripts/generate_worker_protocol.py
       - run: python scripts/generate_fixture.py
       - run: python scripts/generate_documentation_contracts.py
-      - run: git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
+      - run: git diff --exit-code -- openapi fixtures documentation/contracts
       - name: Generate exact merged-commit OpenAPI artifact
         env:
           SOURCE_COMMIT: ${{ github.sha }}
@@ -47,9 +44,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          build-contexts: |
-            adapter-artifacts=.platform-adapters
-            iam-artifacts=.iam-artifacts
           push: true
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
@@ -72,8 +66,7 @@ jobs:
         run: |
           printf '%s\n' "image=ghcr.io/zephytiju/juntai-synthetic-data-generation@${IMAGE_DIGEST}" > dist/publication-evidence.txt
           printf '%s\n' "source=${SOURCE_COMMIT}" >> dist/publication-evidence.txt
-          sha256sum .platform-adapters/*.whl .platform-adapters/manifest.json >> dist/publication-evidence.txt
-          sha256sum .iam-artifacts/*.whl >> dist/publication-evidence.txt
+          python -m pip freeze | sort >> dist/publication-evidence.txt
           shasum -a 256 openapi/synthetic-data-generation.v1.json >> dist/publication-evidence.txt
           shasum -a 256 fixtures/* >> dist/publication-evidence.txt
       - uses: actions/upload-artifact@v5
@@ -85,9 +78,8 @@ jobs:
             fixtures/
             migrations/0001_jobs.sql
             migrations/0002_worker_protocol.sql
-            migrations/0003_transport_relay.sql
+            migrations/0003_synchronous_generations.sql
             migrations/manifest.v1.json
-            contracts/worker-protocol/
             openapi/synthetic-data-generation.v1.json
             openapi/synthetic-data-generation.v1.sha256
             documentation/contracts/

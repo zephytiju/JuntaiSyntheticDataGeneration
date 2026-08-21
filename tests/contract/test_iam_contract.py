@@ -9,7 +9,6 @@ import pytest
 from juntai.iam import AuthorityMode, IdentityContext, PrincipalKind
 
 from juntai_synthetic_data.iam_contract import (
-    CASDOOR_IMAGE,
     IAM_CONTRACT_MANIFEST_SHA256,
     IAM_CONTRACTS_SOURCE_COMMIT,
     IAM_CONTRACTS_VERSION,
@@ -17,8 +16,6 @@ from juntai_synthetic_data.iam_contract import (
     IAM_SOURCE_COMMIT,
     IAM_VERSION,
     IAM_WHEEL_SHA256,
-    PLATFORM_SOURCE_COMMIT,
-    PLATFORM_VERSION,
     validate_iam_runtime,
 )
 
@@ -36,11 +33,6 @@ def test_runtime_uses_only_the_exact_published_iam_tuple() -> None:
     assert IAM_CONTRACTS_SOURCE_COMMIT == "a37b6d6daaba75efd8c15c19b440a3081ba761c5"
     assert IAM_CONTRACTS_WHEEL_SHA256 == (
         "e1daa81386669cfbf74b119c73f822d80a2f5e7a64a187538c54dcff07643cf1"
-    )
-    assert PLATFORM_VERSION == "1.1.0"
-    assert PLATFORM_SOURCE_COMMIT == "763e126735b572e8cf334115c5fa33968326819c"
-    assert CASDOOR_IMAGE.endswith(
-        "@sha256:d7658640aba370495e59dc1464756d2ae7ec66576203b9de0040e9cc37793607"
     )
 
 

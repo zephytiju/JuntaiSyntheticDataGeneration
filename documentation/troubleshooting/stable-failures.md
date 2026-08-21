@@ -1,34 +1,20 @@
 # Stable failures and recovery
 
-- `CONTRACT_INVALID`: correct the structural contract; do not retry unchanged input.
-- `PROVIDER_UNSUPPORTED` or `DETERMINISTIC_SEED_INCOMPATIBLE`: choose supported declared requirements.
-- `POLICY_DENIED`: remove disallowed input or obtain the required authorization; do not bypass policy.
-- `QUOTA_EXCEEDED`: reduce bounds or wait for the quota window. The failure is retryable only as reported.
-- `IDEMPOTENCY_KEY_REUSED`: use the original identical request or a new key for changed content.
-- `VALIDATOR_FAILED` or `SANDBOX_VIOLATION`: correct the exact validator or candidate contract. No dataset is published.
-- `OUTPUT_LIMIT_EXCEEDED`: reduce record or byte bounds. Temporary data is removed.
-- `PUBLICATION_FAILED`, `DEPENDENCY_UNAVAILABLE`, or `DEPENDENCY_DEADLINE`: retry identical content with bounded backoff only when `retryable` is true.
-- `JOB_NOT_FOUND`: verify tenant authority and exact job ID.
-- `JOB_NOT_SUCCEEDED`: continue polling or inspect the terminal failure before requesting a result.
-- `JOB_CANCELLED`: create a new job if generation is still required.
-- `CONCURRENCY_CONFLICT`: reread status and retry the intended operation against current state.
-- `PROTOCOL_UNSUPPORTED` or `ENVELOPE_INVALID`: quarantine the delivery; deploy an executor that
-  supports SWP/v1 rather than rewriting the frame.
-- `ENVELOPE_DIGEST_MISMATCH`, `IDENTITY_MISMATCH`, `TENANT_MISMATCH`, or `RESULT_CONFLICT`: fail
-  closed and investigate transport/integrity evidence; never acknowledge as success.
-- `ATTEMPT_STALE` or `RESULT_DUPLICATE`: do not reapply job state. Record cleanup evidence for any
-  newly published orphan Artifact.
-- `WORKER_EXITED` or retryable `DEPENDENCY_UNAVAILABLE`: Platform applies full-jitter scheduling
-  inside the original deadline and durable five-generation budget; Synthetic does not count claims.
-- `SWP_DEADLINE_EXCEEDED` or `SWP_DEPENDENCY_UNAVAILABLE` while awaiting `ResultAccepted`: close
-  the old Attach client, reauthenticate the same live claim, verify the dispatch bytes are identical,
-  and resend only the identical pending result tuple once. Never rerun the engine or treat enqueue as
-  acceptance.
-- `SWP_RESULT_CONFLICT`, `SWP_SEQUENCE_INVALID`, `SWP_SESSION_CLOSED`, or changed replayed dispatch:
-  fail closed. Do not alter the result frame, infer ledger state, or open a new claim generation.
-- `DELIVERY_EXHAUSTED`: inspect the dead-letter record and immutable evidence. Automated retries
-  stop after five deliveries.
-- `ARTIFACT_INTEGRITY_FAILED`: do not associate the output; exact coordinates, tenant, media type,
-  producer build, or digest verification failed.
+- `CONTRACT_INVALID`: correct the bounded generation or destination mapping.
+- `PROVIDER_UNSUPPORTED`: choose an installed in-process provider with compatible requirements.
+- `POLICY_DENIED`: use an authorized test-fleet identity and permitted data classification.
+- `DESTINATION_FORBIDDEN`: choose a schema/table in the deployment allowlist; never broaden it from
+  the request.
+- `DESTINATION_INVALID`: reconcile mappings, types, defaults, unique keys, or foreign keys with the
+  live application schema.
+- `DESTINATION_CONFLICT`: change the seed/rules or remove the conflicting application key. The
+  failed transaction wrote nothing.
+- `OUTPUT_LIMIT_EXCEEDED`: reduce record or byte bounds.
+- `IDEMPOTENCY_KEY_REUSED`: replay the original identical content or choose a new key.
+- `DEPENDENCY_UNAVAILABLE`: retry the identical request after the database dependency recovers.
+- `GENERATION_NOT_FOUND`: verify tenant authority and the exact generation ID.
+- `DELETE_CONFLICT`: restore/reconcile externally changed rows before retrying exact deletion. The
+  failed deletion rolled back in full.
 
-Never recover by weakening digest checks, switching to a mutable input, querying private storage, or treating a partial upload as a successful result.
+Never recover by supplying database credentials in the API, widening the allowlist, changing a
+request under an existing idempotency key, issuing raw SQL, or deleting rows outside the exact ledger.

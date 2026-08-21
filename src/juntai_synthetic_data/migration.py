@@ -191,7 +191,7 @@ CREATE TABLE IF NOT EXISTS juntai_synthetic_data.schema_migrations (
 )
 """
 
-_EXPECTED_COLUMNS: dict[str, dict[str, tuple[str, int | None, str]]] = {
+_LEGACY_EXPECTED_COLUMNS: dict[str, dict[str, tuple[str, int | None, str]]] = {
     "jobs": {
         "job_id": ("character varying", 64, "NO"),
         "tenant_id": ("character varying", 128, "NO"),
@@ -226,10 +226,10 @@ def _relation_exists(cursor: Any, relation: str) -> bool:
     return cursor.fetchone()[0] is not None
 
 
-def _baseline_state(cursor: Any) -> str:
+def _legacy_state(cursor: Any) -> str:
     relations = {
         name: _relation_exists(cursor, f"juntai_synthetic_data.{name}")
-        for name in _EXPECTED_COLUMNS
+        for name in _LEGACY_EXPECTED_COLUMNS
     }
     if not any(relations.values()):
         return "absent"
@@ -244,11 +244,11 @@ def _baseline_state(cursor: Any) -> str:
         """
     )
     actual_columns: dict[str, dict[str, tuple[str, int | None, str]]] = {
-        name: {} for name in _EXPECTED_COLUMNS
+        name: {} for name in _LEGACY_EXPECTED_COLUMNS
     }
     for table_name, column_name, data_type, maximum_length, nullable in cursor.fetchall():
         actual_columns[table_name][column_name] = (data_type, maximum_length, nullable)
-    for table_name, expected in _EXPECTED_COLUMNS.items():
+    for table_name, expected in _LEGACY_EXPECTED_COLUMNS.items():
         if any(
             actual_columns[table_name].get(column) != shape for column, shape in expected.items()
         ):
@@ -262,7 +262,7 @@ def _baseline_state(cursor: Any) -> str:
            AND c.relname IN ('jobs', 'job_transitions')
         """
     )
-    if {name for name, enabled in cursor.fetchall() if enabled} != set(_EXPECTED_COLUMNS):
+    if {name for name, enabled in cursor.fetchall() if enabled} != set(_LEGACY_EXPECTED_COLUMNS):
         return "partial"
     cursor.execute(
         """
@@ -291,6 +291,102 @@ def _baseline_state(cursor: Any) -> str:
     for required in ("jobs_runnable_idx", "state", "created_at", "job_id", "where"):
         if required not in index_definition:
             return "partial"
+    return "complete"
+
+
+_GENERATION_EXPECTED_COLUMNS: dict[str, dict[str, tuple[str, int | None, str]]] = {
+    "generations": {
+        "tenant_id": ("character varying", 128, "NO"),
+        "generation_id": ("character varying", 64, "NO"),
+        "idempotency_key": ("character varying", 200, "NO"),
+        "request_digest": ("bpchar", 71, "NO"),
+        "contract_digest": ("bpchar", 71, "NO"),
+        "request_json": ("jsonb", None, "NO"),
+        "seed": ("character varying", 256, "NO"),
+        "provider_class": ("character varying", 64, "NO"),
+        "provider_id": ("character varying", 128, "NO"),
+        "provider_version": ("character varying", 64, "NO"),
+        "policy_digest": ("bpchar", 71, "NO"),
+        "state": ("character varying", 16, "NO"),
+        "data_digest": ("bpchar", 71, "NO"),
+        "record_count": ("integer", None, "NO"),
+        "byte_count": ("bigint", None, "NO"),
+        "destinations_json": ("jsonb", None, "NO"),
+        "created_at": ("timestamp with time zone", None, "NO"),
+        "deleted_at": ("timestamp with time zone", None, "YES"),
+    },
+    "generation_rows": {
+        "tenant_id": ("character varying", 128, "NO"),
+        "generation_id": ("character varying", 64, "NO"),
+        "insert_ordinal": ("integer", None, "NO"),
+        "record_type": ("character varying", 63, "NO"),
+        "destination_schema": ("character varying", 63, "NO"),
+        "destination_table": ("character varying", 63, "NO"),
+        "key_values": ("jsonb", None, "NO"),
+        "delete_rank": ("integer", None, "NO"),
+    },
+}
+
+
+def _generation_state(cursor: Any) -> str:
+    relations = {
+        name: _relation_exists(cursor, f"juntai_synthetic_data.{name}")
+        for name in _GENERATION_EXPECTED_COLUMNS
+    }
+    if not any(relations.values()):
+        return "absent"
+    if not all(relations.values()):
+        return "partial"
+    cursor.execute(
+        """
+        SELECT table_name, column_name, data_type, character_maximum_length, is_nullable
+          FROM information_schema.columns
+         WHERE table_schema = 'juntai_synthetic_data'
+           AND table_name IN ('generations', 'generation_rows')
+        """
+    )
+    actual: dict[str, dict[str, tuple[str, int | None, str]]] = {
+        name: {} for name in _GENERATION_EXPECTED_COLUMNS
+    }
+    for table_name, column_name, data_type, maximum_length, nullable in cursor.fetchall():
+        actual[table_name][column_name] = (data_type, maximum_length, nullable)
+    for table_name, expected in _GENERATION_EXPECTED_COLUMNS.items():
+        if any(actual[table_name].get(column) != shape for column, shape in expected.items()):
+            return "partial"
+    cursor.execute(
+        """
+        SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
+          FROM pg_class AS c
+          JOIN pg_namespace AS n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'juntai_synthetic_data'
+           AND c.relname IN ('generations', 'generation_rows')
+        """
+    )
+    if {name for name, enabled, forced in cursor.fetchall() if enabled and forced} != set(
+        _GENERATION_EXPECTED_COLUMNS
+    ):
+        return "partial"
+    cursor.execute(
+        "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'juntai_synthetic_data'"
+    )
+    policies = set(cursor.fetchall())
+    if (
+        not {
+            ("generations", "generations_tenant_isolation"),
+            ("generation_rows", "generation_rows_tenant_isolation"),
+        }
+        <= policies
+    ):
+        return "partial"
+    cursor.execute(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = 'juntai_synthetic_data' "
+        "AND indexname IN ('generations_created_idx', 'generation_rows_delete_idx')"
+    )
+    if {str(row[0]) for row in cursor.fetchall()} != {
+        "generations_created_idx",
+        "generation_rows_delete_idx",
+    }:
+        return "partial"
     return "complete"
 
 
@@ -350,107 +446,6 @@ def _worker_protocol_state(cursor: Any) -> str:
         "cancel_sequence",
         "active_attempt_id",
         "active_attempt_number",
-    }:
-        return "partial"
-    return "complete"
-
-
-_RELAY_COLUMNS = {
-    "platform_publication_id",
-    "lease_owner",
-    "lease_token",
-    "lease_expires_at",
-    "publish_attempts",
-    "next_attempt_at",
-    "last_error_code",
-    "last_error_at",
-    "updated_at",
-}
-
-_DEAD_LETTER_COLUMNS = {
-    "tenant_id",
-    "job_id",
-    "attempt_id",
-    "dead_letter_id",
-    "original_channel",
-    "message_id",
-    "content_digest",
-    "original_content_digest",
-    "record_digest",
-    "canonical_bytes",
-    "delivery_count",
-    "producer_namespace",
-    "producer_service_account",
-    "terminal_reason_code",
-    "ledger_evidence_id",
-    "event_id",
-    "disposition",
-    "committed_at",
-}
-
-
-def _transport_relay_state(cursor: Any) -> str:
-    relation = "juntai_synthetic_data.worker_dead_letter_inbox"
-    dead_letter_exists = _relation_exists(cursor, relation)
-    cursor.execute(
-        """
-        SELECT column_name
-          FROM information_schema.columns
-         WHERE table_schema = 'juntai_synthetic_data'
-           AND table_name = 'worker_outbox'
-           AND column_name IN (
-               'platform_publication_id', 'lease_owner', 'lease_token', 'lease_expires_at',
-               'publish_attempts',
-               'next_attempt_at', 'last_error_code', 'last_error_at', 'updated_at'
-           )
-        """
-    )
-    columns = {row[0] for row in cursor.fetchall()}
-    if not dead_letter_exists and not columns:
-        return "absent"
-    if not dead_letter_exists or columns != _RELAY_COLUMNS:
-        return "partial"
-    cursor.execute(
-        """
-        SELECT column_name
-          FROM information_schema.columns
-         WHERE table_schema = 'juntai_synthetic_data'
-           AND table_name = 'worker_dead_letter_inbox'
-        """
-    )
-    if {row[0] for row in cursor.fetchall()} != _DEAD_LETTER_COLUMNS:
-        return "partial"
-    cursor.execute(
-        """
-        SELECT c.relrowsecurity
-          FROM pg_class AS c
-          JOIN pg_namespace AS n ON n.oid = c.relnamespace
-         WHERE n.nspname = 'juntai_synthetic_data'
-           AND c.relname = 'worker_dead_letter_inbox'
-        """
-    )
-    row = cursor.fetchone()
-    if not row or not row[0]:
-        return "partial"
-    cursor.execute(
-        "SELECT tablename, policyname FROM pg_policies WHERE schemaname = 'juntai_synthetic_data'"
-    )
-    if (
-        "worker_dead_letter_inbox",
-        "worker_dead_letter_tenant_isolation",
-    ) not in set(cursor.fetchall()):
-        return "partial"
-    cursor.execute(
-        """
-        SELECT indexname
-          FROM pg_indexes
-         WHERE schemaname = 'juntai_synthetic_data'
-           AND indexname IN ('worker_outbox_relay_ready_idx', 'worker_outbox_lease_expiry_idx')
-        """
-    )
-    if {row[0] for row in cursor.fetchall()} != {
-        "worker_outbox_relay_ready_idx",
-        "worker_outbox_lease_expiry_idx",
     }:
         return "partial"
     return "complete"
@@ -517,7 +512,8 @@ def apply_migrations(
         ):
             _verify_server(cursor, required_prefix)
             cursor.execute("SELECT pg_advisory_xact_lock(%s)", (lock_id,))
-            baseline_state = _baseline_state(cursor)
+            legacy_state = _legacy_state(cursor)
+            generation_state = _generation_state(cursor)
             ledger = _read_ledger(cursor)
             unknown = sorted(set(ledger) - set(expected))
             if unknown:
@@ -527,16 +523,20 @@ def apply_migrations(
             for migration_id, checksum in ledger.items():
                 if checksum != expected[migration_id].checksum:
                     raise MigrationSafetyError(f"applied migration checksum drift: {migration_id}")
-            if ledger and baseline_state != "complete":
-                raise MigrationSafetyError(
-                    "migration ledger exists but baseline schema is incomplete"
-                )
+            if ledger:
+                if "0003_synchronous_generations" in ledger:
+                    if generation_state != "complete" or legacy_state != "absent":
+                        raise MigrationSafetyError(
+                            "migration ledger expects the synchronous generation schema"
+                        )
+                elif legacy_state != "complete":
+                    raise MigrationSafetyError(
+                        "migration ledger exists but the released legacy schema is incomplete"
+                    )
             pending = tuple(item for item in ordered if item.migration_id not in ledger)
             if check:
-                if not pending and _worker_protocol_state(cursor) != "complete":
-                    raise MigrationSafetyError("SWP/v1 schema is incomplete")
-                if not pending and _transport_relay_state(cursor) != "complete":
-                    raise MigrationSafetyError("SWP/v1 transport relay schema is incomplete")
+                if not pending and _generation_state(cursor) != "complete":
+                    raise MigrationSafetyError("synchronous generation schema is incomplete")
                 status = "pending" if pending else "current"
                 return MigrationResult(
                     status=status,
@@ -545,15 +545,19 @@ def apply_migrations(
                     current=tuple(ledger),
                     pending=tuple(item.migration_id for item in pending),
                 )
-            if baseline_state == "partial":
+            if legacy_state == "partial" or generation_state == "partial":
                 raise MigrationSafetyError(
                     "partial or incompatible released baseline detected; "
                     "refusing repair or downgrade"
                 )
+            if not ledger and generation_state == "complete":
+                raise MigrationSafetyError(
+                    "untracked synchronous generation schema cannot be adopted"
+                )
             applied: list[str] = []
             adopted: list[str] = []
             for index, migration in enumerate(pending):
-                is_baseline = index == 0 and baseline_state == "complete" and not ledger
+                is_baseline = index == 0 and legacy_state == "complete" and not ledger
                 if is_baseline:
                     if migration.baseline_version is None:
                         raise MigrationSafetyError(
@@ -568,19 +572,18 @@ def apply_migrations(
                     _record(cursor, migration, binding, False)
                     applied.append(migration.migration_id)
                 ledger[migration.migration_id] = migration.checksum
-                baseline_state = "complete"
-            if _baseline_state(cursor) != "complete":
-                raise MigrationSafetyError("post-migration schema verification failed")
-            if any(item.migration_id == "0002_worker_protocol" for item in ordered) and (
-                _worker_protocol_state(cursor) != "complete"
-            ):
-                raise MigrationSafetyError("post-migration SWP/v1 schema verification failed")
-            if any(item.migration_id == "0003_transport_relay" for item in ordered) and (
-                _transport_relay_state(cursor) != "complete"
-            ):
-                raise MigrationSafetyError(
-                    "post-migration SWP/v1 transport relay schema verification failed"
-                )
+                legacy_state = _legacy_state(cursor)
+            if "0003_synchronous_generations" in ledger:
+                if _generation_state(cursor) != "complete":
+                    raise MigrationSafetyError(
+                        "post-migration synchronous generation schema verification failed"
+                    )
+                if _legacy_state(cursor) != "absent" or _worker_protocol_state(cursor) != "absent":
+                    raise MigrationSafetyError(
+                        "post-migration legacy job or worker schema remains present"
+                    )
+            elif _legacy_state(cursor) != "complete":
+                raise MigrationSafetyError("post-migration legacy schema verification failed")
             return MigrationResult(
                 status="applied" if applied or adopted else "current",
                 applied=tuple(applied),

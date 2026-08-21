@@ -44,8 +44,6 @@ jobs:
           git checkout --detach "$release_sha"
           test "$(git rev-parse HEAD)" = "$release_sha"
           test "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" = "$VERSION"
-      - name: Require official immutable Platform adapter publication
-        run: sh scripts/require-published-platform-adapters.sh
       - name: Resolve and verify the already-published exact source image
         run: |
           docker buildx imagetools inspect "$IMAGE:sha-$RELEASE_SHA" --raw > /tmp/image-index.json
@@ -55,14 +53,13 @@ jobs:
           echo "IMAGE_DIGEST=$resolved" >> "$GITHUB_ENV"
       - name: Install, lint, test, and build deterministic wheel
         run: |
-          python -m pip install --find-links .platform-adapters --find-links .iam-artifacts -e '.[test]'
+          python -m pip install -e '.[test]'
           ruff check .
           ruff format --check .
           python scripts/generate_openapi.py
-          python scripts/generate_worker_protocol.py
           python scripts/generate_fixture.py
           python scripts/generate_documentation_contracts.py
-          git diff --exit-code -- openapi contracts/worker-protocol fixtures documentation/contracts
+          git diff --exit-code -- openapi fixtures documentation/contracts
           pytest -q
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$RELEASE_SHA")"
           python -m build --wheel
@@ -77,10 +74,7 @@ jobs:
             --source-revision "$RELEASE_SHA" \
             --image "$IMAGE" \
             --image-digest "$IMAGE_DIGEST" \
-            --run-id "$GITHUB_RUN_ID" \
-            --platform-contract-manifest .platform-adapters/manifest.json \
-            --iam-wheel .iam-artifacts/juntai_iam-1.1.0-py3-none-any.whl \
-            --iam-contracts-wheel .iam-artifacts/juntai_iam_contracts-1.1.1-py3-none-any.whl
+            --run-id "$GITHUB_RUN_ID"
           cd dist/release-assets
           sha256sum -c SHA256SUMS
       - uses: actions/attest-build-provenance@v3
@@ -126,8 +120,8 @@ jobs:
             gh release create "$RELEASE_TAG" \
               dist/release-assets/* \
               --verify-tag \
-              --title "Synthetic Data service, relay, SWP/v1, and KES migrations 1.3.0" \
-              --notes "Service-owned transactional SWP/v1 relay and inbox semantics, Platform-owned durable queue/executor integration, exact IAM 1.1 tuple, forward-only job-metadata KES migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior Synthetic tags and releases remain unchanged."
+              --title "Synthetic Data synchronous service and KES migrations 1.3.0" \
+              --notes "Test-fleet synchronous application-data generation, exact IAM 1.1 tuple, forward-only service metadata migrations, real KingbaseES acceptance, and digest-pinned multiarch image $IMAGE_DIGEST. Prior Synthetic tags and releases remain unchanged."
           fi
       - name: Verify immutable release
         env:

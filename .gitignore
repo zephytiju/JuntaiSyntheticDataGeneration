@@ -6,8 +6,6 @@ __pycache__/
 *.egg-info/
 build/
 dist/
-.platform-adapters/
-.iam-artifacts/
 .coverage
 htmlcov/
 .mypy_cache/

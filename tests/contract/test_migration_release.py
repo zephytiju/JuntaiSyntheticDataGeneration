@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 SQL_DIGEST = "af29058d1ca61516415cc3b3f877987012c371fba5fdec0170bc83dc76c19822"
 SWP_SQL_DIGEST = "3e1938165b6ff0bcc9dcfc80288e74f32715474e259f82b346307724c0809779"
-RELAY_SQL_DIGEST = "35bae91e58131efe36af88ca7c39d4219148faa757216968b1f52e33c61df698"
+SYNCHRONOUS_SQL_DIGEST = "87c1133e49344322b92a885fc9c44089d0cadd1e0cce14f5b7170c6093370b11"
 KES_DIGEST = "0bce318e74adca7a3d619b55b336269017507fd679833b7ce5d8400289661724"
 
 
@@ -18,19 +18,21 @@ def test_migration_set_is_exact_ordered_and_service_owned() -> None:
     assert [item["id"] for item in document["migrations"]] == [
         "0001_jobs",
         "0002_worker_protocol",
-        "0003_transport_relay",
+        "0003_synchronous_generations",
     ]
     assert hashlib.sha256(sql).hexdigest() == SQL_DIGEST
     assert document["migrations"][0]["sha256"] == SQL_DIGEST
     assert document["migrations"][1]["sha256"] == SWP_SQL_DIGEST
-    assert document["migrations"][2]["sha256"] == RELAY_SQL_DIGEST
+    assert document["migrations"][2]["sha256"] == SYNCHRONOUS_SQL_DIGEST
     assert (
         hashlib.sha256((ROOT / "migrations" / "0002_worker_protocol.sql").read_bytes()).hexdigest()
         == SWP_SQL_DIGEST
     )
     assert (
-        hashlib.sha256((ROOT / "migrations" / "0003_transport_relay.sql").read_bytes()).hexdigest()
-        == RELAY_SQL_DIGEST
+        hashlib.sha256(
+            (ROOT / "migrations" / "0003_synchronous_generations.sql").read_bytes()
+        ).hexdigest()
+        == SYNCHRONOUS_SQL_DIGEST
     )
     assert document["database"]["schema"] == "juntai_synthetic_data"
     assert document["command"]["entryPoint"] == "juntai-synthetic-data migrate"
@@ -46,8 +48,11 @@ def test_real_kes_harness_is_pinned_and_covers_required_matrix() -> None:
         "_concurrency",
         "_partial_failure",
         "_released_baseline_upgrade",
-        "_tenant_isolation",
-        "_api_worker_startup",
+        "_generation_matrix",
+        "cross-schema-atomic-write",
+        "lost-response-recovery",
+        "exact-key-delete",
+        "tenant-rls-isolation",
         "post-restart",
         "transactional-failure-recovery",
     ):

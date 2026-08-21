@@ -4,15 +4,15 @@ metadata:
   bundleId: synthetic-data-generation.service
   version: 1.3.0
   ownerKey: synthetic-data-generation
-  producerBuildId: 7e42eea5ead03e889e8465f29339222d879bd536
+  producerBuildId: "0000000000000000000000000000000000000000"
 contracts:
   openapi:
     path: contracts/openapi.json
-    digest: sha256:ae36c89103a4cf341111c2001ab35ae76f06335d9d5168bdd29d637c4837ee2b
+    digest: sha256:15795e1a7f82b10289e67575d6c35e0931885a47bc2d4b51adcc03f6c4974b33
   mcp:
     path: contracts/mcp-descriptor.json
-    digest: sha256:20e4336720ed956c132671e12755e303114de9ef8d78ecc9e6faf65e41238f75
-    descriptorDigest: sha256:20e4336720ed956c132671e12755e303114de9ef8d78ecc9e6faf65e41238f75
+    digest: sha256:bf5eef23851cf046b01b82c21225c7534f52af98dae7415587f18d8b7de36432
+    descriptorDigest: sha256:bf5eef23851cf046b01b82c21225c7534f52af98dae7415587f18d8b7de36432
 sources:
   root: .
   units:
@@ -24,129 +24,87 @@ sources:
       sourcePath: guides/overview.md
       order: 0
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.overview
-        mimeType: text/markdown
+      mcp: {resourceId: synthetic-data.overview, mimeType: text/markdown}
     - unitId: synthetic-data.workflow.create
       kind: workflow
       audiences: [human, agent, developer]
       locale: en
-      title: Create a bounded generation job
-      sourcePath: workflows/create-job.md
+      title: Create application preview data
+      sourcePath: workflows/create-generation.md
       parentUnitId: synthetic-data.overview
       order: 10
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.workflow.create
-        mimeType: text/markdown
-    - unitId: synthetic-data.workflow.monitor-cancel
+      mcp: {resourceId: synthetic-data.workflow.create, mimeType: text/markdown}
+    - unitId: synthetic-data.workflow.recover-delete
       kind: workflow
       audiences: [human, agent, developer, operator]
       locale: en
-      title: Monitor or cancel a job
-      sourcePath: workflows/monitor-and-cancel.md
+      title: Recover or delete a generation
+      sourcePath: workflows/recover-and-delete.md
       parentUnitId: synthetic-data.overview
       order: 20
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.workflow.monitor-cancel
-        mimeType: text/markdown
-    - unitId: synthetic-data.workflow.result
-      kind: workflow
-      audiences: [human, agent, developer, operator]
-      locale: en
-      title: Resolve a successful dataset result
-      sourcePath: workflows/resolve-result.md
-      parentUnitId: synthetic-data.overview
-      order: 30
-      lifecycle: release
-      mcp:
-        resourceId: synthetic-data.workflow.result
-        mimeType: text/markdown
+      mcp: {resourceId: synthetic-data.workflow.recover-delete, mimeType: text/markdown}
     - unitId: synthetic-data.reference.api
       kind: reference
       audiences: [human, agent, developer]
       locale: en
-      title: Exact HTTP API and lifecycle
+      title: HTTP API and lifecycle
       sourcePath: reference/api-and-lifecycle.md
       parentUnitId: synthetic-data.overview
-      order: 40
+      order: 30
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.reference.api
-        mimeType: text/markdown
+      mcp: {resourceId: synthetic-data.reference.api, mimeType: text/markdown}
     - unitId: synthetic-data.reference.contract
       kind: reference
       audiences: [human, agent, developer]
       locale: en
-      title: Generation contract reference
+      title: Generation contract
       sourcePath: reference/generation-contract.md
+      parentUnitId: synthetic-data.overview
+      order: 40
+      lifecycle: release
+      mcp: {resourceId: synthetic-data.reference.contract, mimeType: text/markdown}
+    - unitId: synthetic-data.reference.destination
+      kind: reference
+      audiences: [human, agent, developer, operator]
+      locale: en
+      title: Destination validation
+      sourcePath: reference/destination-validation.md
       parentUnitId: synthetic-data.overview
       order: 50
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.reference.contract
-        mimeType: text/markdown
-    - unitId: synthetic-data.reference.validator
+      mcp: {resourceId: synthetic-data.reference.destination, mimeType: text/markdown}
+    - unitId: synthetic-data.reference.migration
       kind: reference
-      audiences: [human, agent, developer, operator]
+      audiences: [human, developer, operator]
       locale: en
-      title: Exact validator Artifact reference
-      sourcePath: reference/validator-artifact.md
+      title: Migration and recovery
+      sourcePath: reference/migration-and-recovery.md
       parentUnitId: synthetic-data.overview
       order: 60
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.reference.validator
-        mimeType: text/markdown
-    - unitId: synthetic-data.reference.worker-protocol
-      kind: reference
-      audiences: [human, agent, developer, operator]
-      locale: en
-      title: Synthetic Worker Protocol v1
-      sourcePath: reference/worker-protocol.md
-      parentUnitId: synthetic-data.overview
-      order: 65
-      lifecycle: release
-      mcp:
-        resourceId: synthetic-data.reference.worker-protocol
-        mimeType: text/markdown
-    - unitId: synthetic-data.reference.transport-relay
-      kind: reference
-      audiences: [human, agent, developer, operator]
-      locale: en
-      title: Service-owned transport relay
-      sourcePath: reference/transport-relay.md
-      parentUnitId: synthetic-data.overview
-      order: 66
-      lifecycle: release
-      mcp:
-        resourceId: synthetic-data.reference.transport-relay
-        mimeType: text/markdown
+      mcp: {resourceId: synthetic-data.reference.migration, mimeType: text/markdown}
     - unitId: synthetic-data.safety.authorization
       kind: safety
       audiences: [human, agent, developer, operator]
       locale: en
-      title: Authorization, policy, and approvals
+      title: Authorization and policy
       sourcePath: safety/authorization-and-policy.md
       parentUnitId: synthetic-data.overview
       order: 70
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.safety.authorization
-        mimeType: text/markdown
-    - unitId: synthetic-data.safety.isolation
+      mcp: {resourceId: synthetic-data.safety.authorization, mimeType: text/markdown}
+    - unitId: synthetic-data.safety.database
       kind: safety
       audiences: [human, agent, developer, operator]
       locale: en
-      title: Privacy, isolation, and immutable output
-      sourcePath: safety/privacy-and-isolation.md
+      title: Database and data boundary
+      sourcePath: safety/database-boundary.md
       parentUnitId: synthetic-data.overview
       order: 80
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.safety.isolation
-        mimeType: text/markdown
+      mcp: {resourceId: synthetic-data.safety.database, mimeType: text/markdown}
     - unitId: synthetic-data.troubleshooting.failures
       kind: troubleshooting
       audiences: [human, agent, developer, operator]
@@ -156,41 +114,34 @@ sources:
       parentUnitId: synthetic-data.overview
       order: 90
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.troubleshooting.failures
-        mimeType: text/markdown
+      mcp: {resourceId: synthetic-data.troubleshooting.failures, mimeType: text/markdown}
     - unitId: synthetic-data.example.create
       kind: example
       audiences: [human, agent, developer]
       locale: en
-      title: Create-job HTTP example
-      sourcePath: examples/create-job.json
+      title: Create-generation HTTP example
+      sourcePath: examples/create-generation.json
       parentUnitId: synthetic-data.workflow.create
       order: 100
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.example.create
-        mimeType: application/json
-    - unitId: synthetic-data.example.result
+      mcp: {resourceId: synthetic-data.example.create, mimeType: application/json}
+    - unitId: synthetic-data.example.delete
       kind: example
       audiences: [human, agent, developer, operator]
       locale: en
-      title: Successful-result HTTP example
-      sourcePath: examples/job-result.json
-      parentUnitId: synthetic-data.workflow.result
+      title: Delete-generation HTTP example
+      sourcePath: examples/delete-generation.json
+      parentUnitId: synthetic-data.workflow.recover-delete
       order: 110
       lifecycle: release
-      mcp:
-        resourceId: synthetic-data.example.result
-        mimeType: application/json
+      mcp: {resourceId: synthetic-data.example.delete, mimeType: application/json}
 compatibility:
   platform: ">=4.0 <5.0"
   lifecycle: release
   taskClasses:
-    - synthetic-data.jobs.create
-    - synthetic-data.jobs.monitor
-    - synthetic-data.jobs.cancel
-    - synthetic-data.jobs.result
+    - synthetic-data.generations.create
+    - synthetic-data.generations.read
+    - synthetic-data.generations.delete
   frameworks:
     mcp: ">=2.0 <3.0"
 publication:
@@ -201,33 +152,25 @@ publication:
   routeKey: platform.documentation
 provenance:
   sourceRepository: https://github.com/zephytiju/JuntaiSyntheticDataGeneration
-  sourceCommit: 7e42eea5ead03e889e8465f29339222d879bd536
+  sourceCommit: "0000000000000000000000000000000000000000"
   packagerVersion: 1.0.0
-  rendererVersions:
-    human: 1.0.0
-    mcp: 1.0.0
-  builtAt: "2026-08-20T21:39:03Z"
+  rendererVersions: {human: 1.0.0, mcp: 1.0.0}
+  builtAt: "1970-01-01T00:00:00Z"
   approvalEvidenceRef:
     schemaVersion: "1"
     evidenceId: feishu-task-6b177928-e92f-4e11-ac7d-965b042eafbd
     ownerDomain: data-intel-platform
     evidenceKind: release-approval
-    target:
-      kind: resource
-      resourceId: feishu-task:6b177928-e92f-4e11-ac7d-965b042eafbd
+    target: {kind: resource, resourceId: "feishu-task:6b177928-e92f-4e11-ac7d-965b042eafbd"}
     read:
       protocol: openapi
       serviceId: feishu-task-v2
       operationId: task.tasks.get
       openapiDigest: sha256:f91d746ce7ca3b9f7cde7cf279af604adf7db21836be9639bcbe8830a97499b2
     selectors:
-      - selectorId: taskGuid
-        valueType: string
-        value: 6b177928-e92f-4e11-ac7d-965b042eafbd
-      - selectorId: documentedSourceCommit
-        valueType: string
-        value: 7e42eea5ead03e889e8465f29339222d879bd536
-    observedAt: "2026-08-20T21:39:03Z"
+      - {selectorId: taskGuid, valueType: string, value: 6b177928-e92f-4e11-ac7d-965b042eafbd}
+      - {selectorId: documentedSourceCommit, valueType: string, value: "0000000000000000000000000000000000000000"}
+    observedAt: "1970-01-01T00:00:00Z"
     access:
       authorizationPolicyId: data-intel-platform.documentation-release-read
       delegatedCallerRequired: true

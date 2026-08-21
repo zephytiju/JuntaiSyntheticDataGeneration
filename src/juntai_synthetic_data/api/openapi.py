@@ -8,10 +8,15 @@ from typing import Any
 IAM_AUDIENCE = "juntai.synthetic-data.api"
 
 _AUTHORIZATION = {
-    "syntheticData.createJob": ("synthetic-data/jobs", "create"),
-    "syntheticData.getJob": ("synthetic-data/jobs/{job_id}", "read"),
-    "syntheticData.cancelJob": ("synthetic-data/jobs/{job_id}", "cancel"),
-    "syntheticData.getJobResult": ("synthetic-data/jobs/{job_id}", "read"),
+    "syntheticData.createGeneration": ("synthetic-data/generations", "create"),
+    "syntheticData.getGeneration": (
+        "synthetic-data/generations/{generation_id}",
+        "read",
+    ),
+    "syntheticData.deleteGeneration": (
+        "synthetic-data/generations/{generation_id}",
+        "delete",
+    ),
 }
 
 

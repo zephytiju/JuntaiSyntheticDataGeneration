@@ -68,7 +68,7 @@ def build_runtime_authorizer(
     verifier = CasdoorAccessTokenVerifier(
         issuer=issuer,
         audiences=audiences,
-        required_scopes=("synthetic-data:jobs",),
+        required_scopes=("synthetic-data:generations",),
         discovery_url=discovery_url,
         required_token_type="access-token",
     )

@@ -26,7 +26,7 @@ async def test_authorizer_uses_verified_identity_tenant() -> None:
     iam = CapturingIam()
     authorizer = JuntaiIamAuthorizer(iam)  # type: ignore[arg-type]
     request = Request({"type": "http", "headers": []})
-    tenant = await authorizer.authorize(request, action="read", job_id="job_123")
+    tenant = await authorizer.authorize(request, action="read", generation_id="gen_" + "1" * 32)
     assert tenant == "tenant-from-verified-identity"
     assert iam.authorization.tenant == tenant
-    assert iam.authorization.resource == "synthetic-data/jobs/job_123"
+    assert iam.authorization.resource == f"synthetic-data/generations/{'gen_' + '1' * 32}"

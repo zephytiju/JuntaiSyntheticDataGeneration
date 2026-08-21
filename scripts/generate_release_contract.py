@@ -8,7 +8,7 @@ from typing import cast
 
 from juntai.sdk.fuse_api import OpenAPIArtifactGenerator, ServiceArtifactIdentity
 
-from juntai_synthetic_data.api import build_job_group
+from juntai_synthetic_data.api import build_generation_group
 from juntai_synthetic_data.api.openapi import apply_bearer_security
 from juntai_synthetic_data.service import SyntheticDataService
 
@@ -20,7 +20,9 @@ def main() -> None:
     )
     service = cast(SyntheticDataService, object())
     bundle = OpenAPIArtifactGenerator(fuse_api_version="2.0.0").generate(
-        [build_job_group(service)], identity=identity, title="Juntai Synthetic Data Generation"
+        [build_generation_group(service)],
+        identity=identity,
+        title="Juntai Synthetic Data Generation",
     )
     output = Path("dist")
     bundle.write_to(output)

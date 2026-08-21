@@ -46,9 +46,9 @@
       "upgradeFromRelease": "1.1.0"
     },
     {
-      "id": "0003_transport_relay",
-      "path": "0003_transport_relay.sql",
-      "sha256": "35bae91e58131efe36af88ca7c39d4219148faa757216968b1f52e33c61df698",
+      "id": "0003_synchronous_generations",
+      "path": "0003_synchronous_generations.sql",
+      "sha256": "87c1133e49344322b92a885fc9c44089d0cadd1e0cce14f5b7170c6093370b11",
       "transactional": true,
       "upgradeFromRelease": "1.2.0"
     }

@@ -27,7 +27,7 @@ def test_manifest_is_ordered_and_binds_exact_source_checksum() -> None:
     assert [migration.migration_id for migration in migrations] == [
         "0001_jobs",
         "0002_worker_protocol",
-        "0003_transport_relay",
+        "0003_synchronous_generations",
     ]
     assert migrations[0].checksum == hashlib.sha256(migrations[0].sql.encode()).hexdigest()
     assert migrations[0].checksum == (
@@ -87,12 +87,6 @@ def test_print_manifest_does_not_build_runtime(
 
     assert cli.main() == 0
     assert "0001_jobs" in capsys.readouterr().out
-
-
-def test_cli_exposes_separate_relay_without_changing_worker_command() -> None:
-    parser = cli._parser()
-    assert parser.parse_args(["relay", "--once"]).mode == "relay"
-    assert parser.parse_args(["worker"]).mode == "worker"
 
 
 def test_migrate_configuration_failure_has_stable_exit_code(

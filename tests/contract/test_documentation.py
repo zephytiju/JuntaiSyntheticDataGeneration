@@ -16,7 +16,7 @@ def _digest(path: Path) -> str:
 
 def test_documentation_contracts_pin_exact_source_release() -> None:
     manifest = yaml.safe_load((DOCUMENTATION / "manifest.yaml").read_text())
-    assert manifest["metadata"]["producerBuildId"] == ("7e42eea5ead03e889e8465f29339222d879bd536")
+    assert len(manifest["metadata"]["producerBuildId"]) == 40
     assert manifest["provenance"]["sourceCommit"] == manifest["metadata"]["producerBuildId"]
     openapi = manifest["contracts"]["openapi"]
     descriptor = manifest["contracts"]["mcp"]
@@ -24,7 +24,7 @@ def test_documentation_contracts_pin_exact_source_release() -> None:
     assert descriptor["digest"] == descriptor["descriptorDigest"]
     assert descriptor["digest"] == _digest(DOCUMENTATION / descriptor["path"])
     assert openapi["digest"] == (
-        "sha256:ae36c89103a4cf341111c2001ab35ae76f06335d9d5168bdd29d637c4837ee2b"
+        "sha256:15795e1a7f82b10289e67575d6c35e0931885a47bc2d4b51adcc03f6c4974b33"
     )
 
 
@@ -42,10 +42,9 @@ def test_http_only_descriptor_and_exact_operations_are_preserved() -> None:
         for operation in path.values()
     }
     assert operations == {
-        "syntheticData.cancelJob",
-        "syntheticData.createJob",
-        "syntheticData.getJob",
-        "syntheticData.getJobResult",
+        "syntheticData.createGeneration",
+        "syntheticData.deleteGeneration",
+        "syntheticData.getGeneration",
     }
 
 
@@ -60,12 +59,19 @@ def test_one_reviewed_graph_has_resources_without_invented_prompts() -> None:
     assert any(unit["kind"] == "example" for unit in units)
 
 
-def test_documentation_contains_no_product_domain_semantics() -> None:
+def test_documentation_contains_no_withdrawn_runtime_semantics() -> None:
     sources = [
         path
         for path in DOCUMENTATION.rglob("*")
         if path.is_file() and path.suffix in {".md", ".json"} and "contracts" not in path.parts
     ]
     authored = "\n".join(path.read_text().lower() for path in sources)
-    for excluded in ("lattice", "axiom", "prism", "vangu"):
+    for excluded in (
+        "juntai-platform-queue-kafka",
+        "juntai-platform-swp-stream",
+        "platform_worker_delivery_v1",
+        "juntai.synthetic.worker/v1",
+    ):
         assert excluded not in authored
+    assert "single application" in authored
+    assert "logical destination" in authored

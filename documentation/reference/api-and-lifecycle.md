@@ -1,27 +1,14 @@
-# Exact HTTP API and lifecycle
+# HTTP API and lifecycle
 
-This bundle binds the exact generated 1.3.0 OpenAPI and its reviewed Synthetic source commit. The
-immutable digest and commit are recorded in `documentation/manifest.yaml`, the capability lock,
-publication result, checksums, SBOM, and provenance.
+All routes require a bearer token for audience `juntai.synthetic-data.api` and the exact
+tenant-scoped authorization action.
 
-| Method and path | Operation ID | Purpose |
-| --- | --- | --- |
-| `POST /v1/jobs/` | `syntheticData.createJob` | Create or replay an asynchronous job. |
-| `GET /v1/jobs/{job_id}` | `syntheticData.getJob` | Read bounded status and evidence. |
-| `POST /v1/jobs/{job_id}:cancel` | `syntheticData.cancelJob` | Request best-effort cancellation. |
-| `GET /v1/jobs/{job_id}/result` | `syntheticData.getJobResult` | Read one exact immutable result after success. |
+- `POST /v1/generations` requires `Idempotency-Key`. It returns `201` for a new atomic commit and
+  `200` for an identical replay.
+- `GET /v1/generations/{generation_id}` returns `COMMITTED` or `DELETED` metadata.
+- `DELETE /v1/generations/{generation_id}` atomically deletes exact keyed application rows and marks
+  the generation `DELETED`. Repeated deletion is idempotent.
 
-All response models reject unknown fields. Digests use lowercase `sha256:` values. `JobStatus` carries `job_id`, `state`, `stage`, `request_digest`, version, timestamps, optional quota, and optional failure. `JobResult` carries one Artifact reference plus exact dataset and provenance facts.
-
-Every operation uses the reviewed HTTP bearer scheme. Tokens must have the exact audience
-`juntai.synthetic-data.api` and scope `synthetic-data:jobs`. The service authenticates a human or
-delegated identity, takes tenant authority only from the verified token, and authorizes `create`,
-`read`, or `cancel` against the exact job resource. Caller-supplied tenant identifiers are not
-authoritative; missing, invalid, wrong-audience, or unauthorized credentials fail closed.
-
-Creating a job atomically records a SWP attempt and canonical dispatch outbox record after the
-immutable input Artifact is published. Worker progress is visible only after the API coordinator
-authenticates the pinned Platform executor, verifies the canonical envelope and exact Artifacts,
-and commits the event with the job transition in KES.
-
-This release has no MCP Tools. Its exact FuseAPI descriptor is still packaged and verified so consumers fail closed if later builds add or change a runtime surface.
+There are no accepted, running, retrying, cancelling, failed-job, result-download, or worker states.
+Transient database failures receive only bounded request-local retries. If POST ultimately fails,
+the database transaction contains neither application rows nor Synthetic generation evidence.

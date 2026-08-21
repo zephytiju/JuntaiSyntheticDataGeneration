@@ -1,16 +1,18 @@
-# Generation contract reference
+# Generation contract
 
-`juntai.synthetic-data.contract/v1` describes bounded structure only.
+The unpublished V1 request uses `juntai.synthetic-data.request/v1` and contains:
 
-- `records` contains 1 to 64 uniquely named record families.
-- Each family declares a positive maximum count and 1 to 256 fields.
-- Field types are `string`, `integer`, `number`, `boolean`, `date`, or `datetime`.
-- Distributions are `constant`, `sequence`, `choice`, `uniform`, `normal`, or `uuid` with kind-specific required parameters.
-- A relation uses `record.field` endpoints. Its target field must be declared unique.
-- `bounds` limits total records, bytes, and shards. Declared family counts must fit `max_records`.
-- Output is `jsonl` or `csv`, with `none` or `gzip` compression.
-- Metadata is bounded opaque text; it is not interpreted as domain semantics.
+- a deterministic seed and an in-process provider selection;
+- record types with positive counts and bounded fields;
+- per-record logical destination `{schema, table, columns, key_fields}`;
+- optional relations between generated fields; and
+- maximum total records and canonical generated-byte size.
 
-Hard public maxima are 1,000,000 records, 1,073,741,824 bytes, 15 shards, 64 record families, 256 fields per family, and 256 relations. Tenant policy and quota may impose lower limits.
+`columns` maps every generated field exactly once to a database column. `key_fields` names generated
+fields whose mapped columns form a live unique or primary key. A relation target must be unique, and
+the relation must match a live database foreign key. V1 rejects relation graphs that cannot be
+inserted and deleted in a deterministic dependency order.
 
-The provider request declares class, deterministic requirement, modes, and maximum runtime. The default released provider class is `tabular`. Deterministic jobs pin the seed and provider behavior; a provider that cannot satisfy determinism fails before generation.
+The request cannot select a database, host, port, DSN, credential, tenant, arbitrary connection
+option, or SQL fragment. Unknown fields are rejected. Provider output must match the exact declared
+record types, counts, field types, uniqueness constraints, relations, and bounds.
